@@ -5,7 +5,7 @@ import { soundFx } from '../utils/soundEffects';
 
 export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', onBalanceUpdate }) {
   const [activeTab, setActiveTab] = useState(initialTab); // 'deposit' | 'withdraw' | 'history'
-  const [depositMethod, setDepositMethod] = useState('easypaisa');
+  const [depositMethod, setDepositMethod] = useState('jazzcash');
   const [depositAmount, setDepositAmount] = useState(1000);
   const [senderAccount, setSenderAccount] = useState('');
   const [tidReference, setTidReference] = useState('');
@@ -15,7 +15,7 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
   const [copied, setCopied] = useState(false);
 
   // Withdraw state
-  const [withdrawMethod, setWithdrawMethod] = useState('easypaisa');
+  const [withdrawMethod, setWithdrawMethod] = useState('jazzcash');
   const [withdrawAmount, setWithdrawAmount] = useState(1000);
   const [accountTitle, setAccountTitle] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
@@ -170,22 +170,22 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
 
   const paymentMethodsList = [
     {
-      id: 'easypaisa',
-      name: 'Easypaisa',
-      sub: 'Mobile Wallet',
-      fee: '0% fee',
-      limits: '100 - 50,000 PKR',
-      icon: <EasyPaisaIcon className="w-10 h-10" />,
-      accountNum: '03005641699',
-      accountTitle: 'Saqib'
-    },
-    {
       id: 'jazzcash',
       name: 'JazzCash',
       sub: 'Mobile Wallet',
       fee: '0% fee',
       limits: '100 - 50,000 PKR',
       icon: <JazzCashIcon className="w-10 h-10" />,
+      accountNum: '03005641699',
+      accountTitle: 'Muhammad Imtiaz'
+    },
+    {
+      id: 'easypaisa',
+      name: 'Easypaisa',
+      sub: 'Mobile Wallet',
+      fee: '0% fee',
+      limits: '100 - 50,000 PKR',
+      icon: <EasyPaisaIcon className="w-10 h-10" />,
       accountNum: '03005641699',
       accountTitle: 'Muhammad Imtiaz'
     }
@@ -485,8 +485,8 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
               </span>
               <div className="grid grid-cols-2 gap-2.5">
                 {[
-                  { id: 'easypaisa', label: 'Easypaisa', icon: <EasyPaisaIcon className="w-8 h-8" /> },
-                  { id: 'jazzcash', label: 'JazzCash', icon: <JazzCashIcon className="w-8 h-8" /> }
+                  { id: 'jazzcash', label: 'JazzCash', icon: <JazzCashIcon className="w-8 h-8" /> },
+                  { id: 'easypaisa', label: 'Easypaisa', icon: <EasyPaisaIcon className="w-8 h-8" /> }
                 ].map(m => (
                   <div
                     key={m.id}

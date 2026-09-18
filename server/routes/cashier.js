@@ -15,7 +15,7 @@ router.get('/config', (req, res) => {
     },
     local: {
       easypaisa: {
-        accountTitle: 'Saqib',
+        accountTitle: 'Muhammad Imtiaz',
         accountNumber: '03005641699',
         instructions: 'Send exact amount and upload payment screenshot with Transaction ID (TID)'
       },
