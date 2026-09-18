@@ -176,8 +176,8 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
       fee: '0% fee',
       limits: '100 - 50,000 PKR',
       icon: <EasyPaisaIcon className="w-10 h-10" />,
-      accountNum: '03451234567',
-      accountTitle: 'SkyWin Official'
+      accountNum: '03005641699',
+      accountTitle: 'Saqib'
     },
     {
       id: 'jazzcash',
@@ -186,8 +186,8 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
       fee: '0% fee',
       limits: '100 - 50,000 PKR',
       icon: <JazzCashIcon className="w-10 h-10" />,
-      accountNum: '03007654321',
-      accountTitle: 'SkyWin Official'
+      accountNum: '03005641699',
+      accountTitle: 'Saqib'
     }
   ];
 

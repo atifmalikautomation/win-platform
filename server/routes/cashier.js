@@ -15,13 +15,13 @@ router.get('/config', (req, res) => {
     },
     local: {
       easypaisa: {
-        accountTitle: 'SkyWin Official',
-        accountNumber: '03451234567',
+        accountTitle: 'Saqib',
+        accountNumber: '03005641699',
         instructions: 'Send exact amount and upload payment screenshot with Transaction ID (TID)'
       },
       jazzcash: {
-        accountTitle: 'SkyWin Official',
-        accountNumber: '03007654321',
+        accountTitle: 'Saqib',
+        accountNumber: '03005641699',
         instructions: 'Send via JazzCash mobile app and submit the TID reference number'
       },
       bank: {
