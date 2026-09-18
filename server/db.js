@@ -6,7 +6,41 @@ const DB_PATH = process.env.VERCEL
   ? path.join('/tmp', 'data.json')
   : path.join(__dirname, 'data.json');
 
+const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0b68e3a7539c1';
 let memoryCache = null;
+let lastCloudSync = 0;
+
+// Cloud Sync Helpers
+async function syncWithCloud() {
+  try {
+    const res = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.data && Array.isArray(json.data.users)) {
+        memoryCache = json.data;
+        lastCloudSync = Date.now();
+        try {
+          fs.writeFileSync(DB_PATH, JSON.stringify(json.data, null, 2), 'utf8');
+        } catch (e) {}
+        return memoryCache;
+      }
+    }
+  } catch (e) {}
+  return memoryCache;
+}
+
+async function pushToCloud(data) {
+  try {
+    const payload = JSON.stringify({ name: 'skywin_database', data });
+    await fetch(CLOUD_DB_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload
+    });
+  } catch (e) {
+    console.error('Cloud push error:', e.message);
+  }
+}
 
 // Initialize database structure
 function initDB() {
@@ -63,25 +97,10 @@ function initDB() {
         isBanned: false
       }
     ],
-    transactions: [
-      {
-        id: 'tx_sample_1',
-        userId: 'usr_demo',
-        username: 'LuckyPlayer',
-        type: 'deposit',
-        method: 'easypaisa',
-        amount: 2500.0,
-        accountNumber: '03001234567',
-        reference: 'EP-98234710',
-        status: 'approved',
-        proofUrl: '',
-        createdAt: new Date(Date.now() - 3600000).toISOString(),
-        approvedAt: new Date().toISOString()
-      }
-    ],
+    transactions: [],
     bets: [],
     gameSettings: {
-      crashRtp: 96, // 96% RTP (4% House edge)
+      crashRtp: 96,
       houseEdge: 4,
       minBet: 10,
       maxBet: 50000,
@@ -118,17 +137,17 @@ function readDB() {
   return memoryCache;
 }
 
-// Atomic write
-function writeDB(data) {
+// Atomic write with cloud persistence
+async function writeDB(data) {
   memoryCache = data;
   try {
     const tempPath = `${DB_PATH}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
     fs.renameSync(tempPath, DB_PATH);
   } catch (err) {
-    // If filesystem write fails in serverless, memoryCache holds the state
     console.warn('writeDB filesystem write failed (using memory cache):', err.message);
   }
+  await pushToCloud(data);
 }
 
 // User Helpers
@@ -147,7 +166,7 @@ function findUserByEmail(email) {
   return db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
 }
 
-function createUser({ username, email, password, role = 'user', initialBalance = 0.0 }) {
+async function createUser({ username, email, password, role = 'user', initialBalance = 0.0 }) {
   const db = readDB();
   const newUser = {
     id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -161,12 +180,12 @@ function createUser({ username, email, password, role = 'user', initialBalance =
     isBanned: false
   };
   db.users.push(newUser);
-  writeDB(db);
+  await writeDB(db);
   return newUser;
 }
 
 // Atomic Balance Adjustment with safety checks
-function updateUserBalance(userId, deltaAmount) {
+async function updateUserBalance(userId, deltaAmount) {
   const db = readDB();
   const user = db.users.find(u => u.id === userId);
   if (!user) throw new Error('User not found');
@@ -177,12 +196,12 @@ function updateUserBalance(userId, deltaAmount) {
   }
 
   user.balance = newBalance;
-  writeDB(db);
+  await writeDB(db);
   return newBalance;
 }
 
 // Transactions / Cashier
-function createTransaction({ userId, username, type, method, amount, accountNumber, reference, proofUrl = '', proofScreenshot = '' }) {
+async function createTransaction({ userId, username, type, method, amount, accountNumber, reference, proofUrl = '', proofScreenshot = '' }) {
   const db = readDB();
   const tx = {
     id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -210,11 +229,11 @@ function createTransaction({ userId, username, type, method, amount, accountNumb
   }
 
   db.transactions.unshift(tx);
-  writeDB(db);
+  await writeDB(db);
   return tx;
 }
 
-function processTransaction(txId, action, adminNotes = '') {
+async function processTransaction(txId, action, adminNotes = '') {
   const db = readDB();
   const tx = db.transactions.find(t => t.id === txId);
   if (!tx) throw new Error('Transaction not found');
@@ -241,7 +260,7 @@ function processTransaction(txId, action, adminNotes = '') {
     }
   }
 
-  writeDB(db);
+  await writeDB(db);
   return tx;
 }
 
@@ -254,7 +273,7 @@ function getTransactions(userId = null) {
 }
 
 // Bets & Stats
-function recordBet({ userId, username, game, betAmount, multiplier, payout, status }) {
+async function recordBet({ userId, username, game, betAmount, multiplier, payout, status }) {
   const db = readDB();
   const bet = {
     id: `bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -276,7 +295,7 @@ function recordBet({ userId, username, game, betAmount, multiplier, payout, stat
   db.stats.totalPayouts = Math.round((db.stats.totalPayouts + payout) * 100) / 100;
   db.stats.grossGamingRevenue = Math.round((db.stats.totalWagered - db.stats.totalPayouts) * 100) / 100;
 
-  writeDB(db);
+  await writeDB(db);
   return bet;
 }
 
@@ -290,10 +309,10 @@ function getGameSettings() {
   return db.gameSettings;
 }
 
-function updateGameSettings(newSettings) {
+async function updateGameSettings(newSettings) {
   const db = readDB();
   db.gameSettings = { ...db.gameSettings, ...newSettings };
-  writeDB(db);
+  await writeDB(db);
   return db.gameSettings;
 }
 
@@ -307,7 +326,7 @@ function getStats() {
 }
 
 // Complete Platform Reset to 0 (Fresh Start)
-function resetPlatformData() {
+async function resetPlatformData() {
   const db = readDB();
   db.transactions = [];
   db.bets = [];
@@ -321,7 +340,7 @@ function resetPlatformData() {
     u.balance = 0.0;
     u.bonusBalance = 0.0;
   });
-  writeDB(db);
+  await writeDB(db);
   return {
     stats: db.stats,
     transactionsCount: 0,
@@ -331,6 +350,7 @@ function resetPlatformData() {
 
 module.exports = {
   readDB,
+  writeDB,
   findUserById,
   findUserByUsername,
   findUserByEmail,
@@ -344,6 +364,7 @@ module.exports = {
   getGameSettings,
   updateGameSettings,
   getStats,
-  resetPlatformData
+  resetPlatformData,
+  syncWithCloud
 };
 

@@ -30,7 +30,7 @@ router.get('/config', (req, res) => {
 });
 
 // Submit a Deposit Request
-router.post('/deposit', authenticateToken, (req, res) => {
+router.post('/deposit', authenticateToken, async (req, res) => {
   try {
     const { method, amount, accountNumber, reference, proofUrl, proofScreenshot } = req.body;
     const numAmount = Number(amount);
@@ -43,7 +43,9 @@ router.post('/deposit', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'Payment method is required' });
     }
 
-    const tx = db.createTransaction({
+    if (db.syncWithCloud) await db.syncWithCloud();
+
+    const tx = await db.createTransaction({
       userId: req.user.id,
       username: req.user.username,
       type: 'deposit',
@@ -65,7 +67,7 @@ router.post('/deposit', authenticateToken, (req, res) => {
 });
 
 // Submit a Withdrawal Request
-router.post('/withdraw', authenticateToken, (req, res) => {
+router.post('/withdraw', authenticateToken, async (req, res) => {
   try {
     const { method, amount, accountNumber, accountTitle } = req.body;
     const numAmount = Number(amount);
@@ -78,7 +80,9 @@ router.post('/withdraw', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'Receiving account / wallet address is required' });
     }
 
-    const tx = db.createTransaction({
+    if (db.syncWithCloud) await db.syncWithCloud();
+
+    const tx = await db.createTransaction({
       userId: req.user.id,
       username: req.user.username,
       type: 'withdraw',
@@ -94,7 +98,7 @@ router.post('/withdraw', authenticateToken, (req, res) => {
     res.json({
       message: 'Withdrawal request submitted! Payout will be processed to your account.',
       transaction: tx,
-      newBalance: updatedUser.balance
+      newBalance: updatedUser ? updatedUser.balance : 0
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -102,7 +106,8 @@ router.post('/withdraw', authenticateToken, (req, res) => {
 });
 
 // User's own transaction history
-router.get('/history', authenticateToken, (req, res) => {
+router.get('/history', authenticateToken, async (req, res) => {
+  if (db.syncWithCloud) await db.syncWithCloud();
   const history = db.getTransactions(req.user.id);
   res.json({ transactions: history });
 });

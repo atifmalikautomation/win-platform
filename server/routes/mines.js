@@ -25,7 +25,7 @@ function calculateMinesMultiplier(totalTiles, minesCount, revealedCount, houseEd
 }
 
 // Start a new Mines Game
-router.post('/start', authenticateToken, (req, res) => {
+router.post('/start', authenticateToken, async (req, res) => {
   try {
     const { betAmount, minesCount = 3 } = req.body;
     const numBet = Number(betAmount);
@@ -44,8 +44,10 @@ router.post('/start', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'You already have an active game in progress' });
     }
 
+    if (db.syncWithCloud) await db.syncWithCloud();
+
     // Deduct balance atomically
-    const newBalance = db.updateUserBalance(req.user.id, -numBet);
+    const newBalance = await db.updateUserBalance(req.user.id, -numBet);
 
     // Generate random mine positions in 5x5 (0 to 24)
     const allPositions = Array.from({ length: 25 }, (_, i) => i);
@@ -81,7 +83,7 @@ router.post('/start', authenticateToken, (req, res) => {
 });
 
 // Reveal a Tile
-router.post('/reveal', authenticateToken, (req, res) => {
+router.post('/reveal', authenticateToken, async (req, res) => {
   try {
     const { tileIndex } = req.body;
     const index = parseInt(tileIndex, 10);
@@ -117,7 +119,7 @@ router.post('/reveal', authenticateToken, (req, res) => {
       // BOOM! Game lost
       activeMinesSessions.delete(req.user.id);
 
-      db.recordBet({
+      await db.recordBet({
         userId: req.user.id,
         username: req.user.username,
         game: 'mines',
@@ -148,9 +150,9 @@ router.post('/reveal', authenticateToken, (req, res) => {
       // Cleared all safe tiles! Auto-win
       activeMinesSessions.delete(req.user.id);
       const payout = parseFloat((session.betAmount * newMultiplier).toFixed(2));
-      const newBalance = db.updateUserBalance(req.user.id, payout);
+      const newBalance = await db.updateUserBalance(req.user.id, payout);
 
-      db.recordBet({
+      await db.recordBet({
         userId: req.user.id,
         username: req.user.username,
         game: 'mines',
@@ -189,7 +191,7 @@ router.post('/reveal', authenticateToken, (req, res) => {
 });
 
 // Cash Out
-router.post('/cashout', authenticateToken, (req, res) => {
+router.post('/cashout', authenticateToken, async (req, res) => {
   try {
     const session = activeMinesSessions.get(req.user.id);
     if (!session) {
@@ -203,9 +205,9 @@ router.post('/cashout', authenticateToken, (req, res) => {
     activeMinesSessions.delete(req.user.id);
 
     const payout = parseFloat((session.betAmount * session.currentMultiplier).toFixed(2));
-    const newBalance = db.updateUserBalance(req.user.id, payout);
+    const newBalance = await db.updateUserBalance(req.user.id, payout);
 
-    db.recordBet({
+    await db.recordBet({
       userId: req.user.id,
       username: req.user.username,
       game: 'mines',

@@ -3,7 +3,7 @@ import { X, Copy, Check, AlertCircle, CheckCircle2, Lock, UploadCloud, Trash2 } 
 import { JazzCashIcon } from './PaymentIcons';
 import { soundFx } from '../utils/soundEffects';
 
-export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', onBalanceUpdate }) {
+export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', user, balance = 0, onBalanceUpdate }) {
   const [activeTab, setActiveTab] = useState(initialTab); // 'deposit' | 'withdraw' | 'history'
   const [depositMethod, setDepositMethod] = useState('jazzcash');
   const [depositAmount, setDepositAmount] = useState(1000);
@@ -26,23 +26,32 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
   const [statusMessage, setStatusMessage] = useState(null);
 
   const fetchHistory = async () => {
+    let remoteTx = [];
     try {
       const token = localStorage.getItem('luckywin_token');
-      if (!token) return;
-      const res = await fetch('/api/cashier/history', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const contentType = res.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (res.ok && data.transactions) {
-          setHistory(data.transactions);
-          return;
+      if (token) {
+        const res = await fetch('/api/cashier/history', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (res.ok && data.transactions) {
+            remoteTx = data.transactions;
+          }
         }
       }
     } catch (err) {}
-    const localTx = JSON.parse(localStorage.getItem('luckywin_transactions') || '[]');
-    setHistory(localTx);
+
+    const localTx1 = JSON.parse(localStorage.getItem('luckywin_local_transactions') || '[]');
+    const localTx2 = JSON.parse(localStorage.getItem('luckywin_transactions') || '[]');
+    const combined = [...remoteTx];
+    [...localTx1, ...localTx2].forEach(tx => {
+      if (!combined.some(t => t.id === tx.id)) {
+        combined.push(tx);
+      }
+    });
+    setHistory(combined);
   };
 
   useEffect(() => {
@@ -127,22 +136,26 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
       }
 
       // Record transaction locally
-      const localTx = JSON.parse(localStorage.getItem('luckywin_transactions') || '[]');
+      const localTx = JSON.parse(localStorage.getItem('luckywin_local_transactions') || localStorage.getItem('luckywin_transactions') || '[]');
       const newTx = {
-        id: `tx_${Date.now()}`,
+        id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        userId: user ? user.id : 'usr_local',
+        username: user ? user.username : 'Player',
         type: 'deposit',
         method: depositMethod,
         amount: Number(depositAmount),
         reference: tidReference || 'JazzCash Proof Attached',
         accountNumber: senderAccount,
+        proofScreenshot: screenshotPreview,
         status: 'pending',
         createdAt: new Date().toISOString()
       };
       localTx.unshift(newTx);
+      localStorage.setItem('luckywin_local_transactions', JSON.stringify(localTx));
       localStorage.setItem('luckywin_transactions', JSON.stringify(localTx));
 
       soundFx.playCashout();
-      setStatusMessage({ type: 'success', text: 'Deposit request submitted successfully! Admin will verify your JazzCash screenshot.' });
+      setStatusMessage({ type: 'success', text: 'Deposit request submitted successfully! Admin will verify your JazzCash screenshot and credit your balance.' });
       setTidReference('');
       setSenderAccount('');
       removeScreenshot();
@@ -157,6 +170,17 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
   const handleWithdrawSubmit = async (e) => {
     e.preventDefault();
     setStatusMessage(null);
+
+    const numWithdraw = Number(withdrawAmount);
+    if (isNaN(numWithdraw) || numWithdraw < 500) {
+      setStatusMessage({ type: 'error', text: 'Minimum withdrawal amount is PKR 500' });
+      return;
+    }
+    if (user && numWithdraw > balance) {
+      setStatusMessage({ type: 'error', text: `Insufficient balance! Your current balance is PKR ${balance.toLocaleString()}` });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -171,7 +195,7 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
           },
           body: JSON.stringify({
             method: withdrawMethod,
-            amount: withdrawAmount,
+            amount: numWithdraw,
             accountTitle,
             accountNumber
           })
@@ -185,11 +209,29 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
         }
       } catch (err) {}
 
+      // Deduct balance locally if not updated remotely
+      const newBal = updatedBalance !== null ? updatedBalance : Math.max(0, parseFloat((balance - numWithdraw).toFixed(2)));
+      onBalanceUpdate(newBal);
+
+      const localTx = JSON.parse(localStorage.getItem('luckywin_local_transactions') || localStorage.getItem('luckywin_transactions') || '[]');
+      const newTx = {
+        id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        userId: user ? user.id : 'usr_local',
+        username: user ? user.username : 'Player',
+        type: 'withdraw',
+        method: withdrawMethod,
+        amount: numWithdraw,
+        accountNumber: `${accountTitle ? accountTitle + ' - ' : ''}${accountNumber}`,
+        reference: 'User Withdrawal Request',
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      localTx.unshift(newTx);
+      localStorage.setItem('luckywin_local_transactions', JSON.stringify(localTx));
+      localStorage.setItem('luckywin_transactions', JSON.stringify(localTx));
+
       soundFx.playCashout();
-      setStatusMessage({ type: 'success', text: 'Withdrawal request created. Funds will be transferred to your account.' });
-      if (updatedBalance !== null) {
-        onBalanceUpdate(updatedBalance);
-      }
+      setStatusMessage({ type: 'success', text: 'Withdrawal request created. Payout will be sent to your JazzCash account.' });
       setAccountTitle('');
       setAccountNumber('');
       fetchHistory();

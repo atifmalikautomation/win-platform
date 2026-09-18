@@ -53,7 +53,7 @@ export default function App() {
     }
 
     const token = localStorage.getItem('luckywin_token');
-    if (token && backendUrl) {
+    if (token) {
       const meUrl = `${backendUrl}/api/auth/me`;
       fetch(meUrl, {
         headers: { Authorization: `Bearer ${token}` }
@@ -105,7 +105,7 @@ export default function App() {
       setUser(updatedUser);
       localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
       const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-      const idx = localUsers.findIndex(u => u.id === user.id);
+      const idx = localUsers.findIndex(u => u.id === user.id || u.username === user.username);
       if (idx !== -1) {
         localUsers[idx].balance = formatted;
         localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
@@ -361,6 +361,7 @@ export default function App() {
         isOpen={cashierModal.isOpen}
         initialTab={cashierModal.tab}
         user={user}
+        balance={balance}
         onClose={() => setCashierModal({ isOpen: false, tab: 'deposit' })}
         onBalanceUpdate={handleBalanceUpdate}
       />
