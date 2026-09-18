@@ -2,93 +2,133 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 
-const DB_PATH = path.join(__dirname, 'data.json');
+const DB_PATH = process.env.VERCEL
+  ? path.join('/tmp', 'data.json')
+  : path.join(__dirname, 'data.json');
+
+let memoryCache = null;
 
 // Initialize database structure
 function initDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    const defaultAdminPassword = bcrypt.hashSync('SkyWin#Saqib2026!', 10);
-    const defaultUserPassword = bcrypt.hashSync('user123', 10);
+  if (memoryCache) return;
 
-    const initialData = {
-      users: [
-        {
-          id: 'usr_saqib_admin',
-          username: 'saqib_admin',
-          email: '60secscriptdoc@gmail.com',
-          passwordHash: defaultAdminPassword,
-          role: 'admin',
-          balance: 100000.0,
-          bonusBalance: 0.0,
-          createdAt: new Date().toISOString(),
-          isBanned: false
-        },
-        {
-          id: 'usr_demo',
-          username: 'LuckyPlayer',
-          email: 'player@example.com',
-          passwordHash: defaultUserPassword,
-          role: 'user',
-          balance: 2500.0,
-          bonusBalance: 500.0,
-          createdAt: new Date().toISOString(),
-          isBanned: false
-        }
-      ],
-      transactions: [
-        {
-          id: 'tx_sample_1',
-          userId: 'usr_demo',
-          username: 'LuckyPlayer',
-          type: 'deposit',
-          method: 'easypaisa',
-          amount: 2500.0,
-          accountNumber: '03001234567',
-          reference: 'EP-98234710',
-          status: 'approved',
-          proofUrl: '',
-          createdAt: new Date(Date.now() - 3600000).toISOString(),
-          approvedAt: new Date().toISOString()
-        }
-      ],
-      bets: [],
-      gameSettings: {
-        crashRtp: 96, // 96% RTP (4% House edge)
-        houseEdge: 4,
-        minBet: 10,
-        maxBet: 50000,
-        maxPayout: 1000000,
-        maintenance: false
+  // If DB_PATH exists, load into memory
+  if (fs.existsSync(DB_PATH)) {
+    try {
+      memoryCache = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+      return;
+    } catch (e) {
+      console.warn('Failed reading existing DB_PATH, will seed fresh:', e.message);
+    }
+  }
+
+  // If in Vercel, try to copy seed from __dirname/data.json
+  const seedPath = path.join(__dirname, 'data.json');
+  if (DB_PATH !== seedPath && fs.existsSync(seedPath)) {
+    try {
+      const seedContent = fs.readFileSync(seedPath, 'utf8');
+      memoryCache = JSON.parse(seedContent);
+      fs.writeFileSync(DB_PATH, seedContent, 'utf8');
+      return;
+    } catch (e) {
+      console.warn('Could not copy seed to DB_PATH:', e.message);
+    }
+  }
+
+  const defaultAdminPassword = bcrypt.hashSync('SkyWin#Saqib2026!', 10);
+  const defaultUserPassword = bcrypt.hashSync('user123', 10);
+
+  const initialData = {
+    users: [
+      {
+        id: 'usr_saqib_admin',
+        username: 'saqib_admin',
+        email: '60secscriptdoc@gmail.com',
+        passwordHash: defaultAdminPassword,
+        role: 'admin',
+        balance: 100000.0,
+        bonusBalance: 0.0,
+        createdAt: new Date().toISOString(),
+        isBanned: false
       },
-      stats: {
-        totalWagered: 0.0,
-        totalPayouts: 0.0,
-        grossGamingRevenue: 0.0
+      {
+        id: 'usr_demo',
+        username: 'LuckyPlayer',
+        email: 'player@example.com',
+        passwordHash: defaultUserPassword,
+        role: 'user',
+        balance: 2500.0,
+        bonusBalance: 500.0,
+        createdAt: new Date().toISOString(),
+        isBanned: false
       }
-    };
+    ],
+    transactions: [
+      {
+        id: 'tx_sample_1',
+        userId: 'usr_demo',
+        username: 'LuckyPlayer',
+        type: 'deposit',
+        method: 'easypaisa',
+        amount: 2500.0,
+        accountNumber: '03001234567',
+        reference: 'EP-98234710',
+        status: 'approved',
+        proofUrl: '',
+        createdAt: new Date(Date.now() - 3600000).toISOString(),
+        approvedAt: new Date().toISOString()
+      }
+    ],
+    bets: [],
+    gameSettings: {
+      crashRtp: 96, // 96% RTP (4% House edge)
+      houseEdge: 4,
+      minBet: 10,
+      maxBet: 50000,
+      maxPayout: 1000000,
+      maintenance: false
+    },
+    stats: {
+      totalWagered: 0.0,
+      totalPayouts: 0.0,
+      grossGamingRevenue: 0.0
+    }
+  };
 
+  memoryCache = initialData;
+  try {
     fs.writeFileSync(DB_PATH, JSON.stringify(initialData, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Could not write initialData to DB_PATH (read-only filesystem):', err.message);
   }
 }
 
 // Thread-safe read
 function readDB() {
   initDB();
-  try {
-    const raw = fs.readFileSync(DB_PATH, 'utf8');
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Error reading DB, re-initializing:', err);
-    initDB();
-    return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+  if (fs.existsSync(DB_PATH)) {
+    try {
+      const raw = fs.readFileSync(DB_PATH, 'utf8');
+      memoryCache = JSON.parse(raw);
+      return memoryCache;
+    } catch (err) {
+      console.warn('Error reading DB_PATH file, using memory cache:', err.message);
+    }
   }
+  return memoryCache;
 }
 
 // Atomic write
 function writeDB(data) {
-  const tempPath = `${DB_PATH}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
-  fs.renameSync(tempPath, DB_PATH);
+  memoryCache = data;
+  try {
+    const tempPath = `${DB_PATH}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tempPath, DB_PATH);
+  } catch (err) {
+    // If filesystem write fails in serverless, memoryCache holds the state
+    console.warn('writeDB filesystem write failed (using memory cache):', err.message);
+  }
 }
 
 // User Helpers

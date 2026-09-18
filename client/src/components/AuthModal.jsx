@@ -39,7 +39,14 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
         body: JSON.stringify(body)
       });
 
-      const data = await res.json();
+      let data = {};
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        throw new Error(`Server returned status ${res.status}. Please check your connection or try again.`);
+      }
+
       if (!res.ok) {
         throw new Error(data.error || 'Authentication failed');
       }
@@ -49,7 +56,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
       onAuthSuccess(data.user);
       onClose();
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Authentication error');
     } finally {
       setLoading(false);
     }

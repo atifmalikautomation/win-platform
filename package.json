@@ -9,6 +9,14 @@
     "build": "cd client && npm install && npm run build",
     "test": "node server/test_verify.js"
   },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "socket.io": "^4.8.3",
+    "uuid": "^14.0.2"
+  },
   "keywords": ["gaming", "skywin", "aviator", "crash-game", "mines", "provably-fair"],
   "author": "Antigravity",
   "license": "ISC"

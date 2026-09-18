@@ -205,6 +205,148 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     };
   }, [socket, user, onBalanceUpdate]);
 
+  // Offline/Standalone Crash Game Loop when Socket is not connected
+  useEffect(() => {
+    if (socket) return;
+
+    let timer = null;
+    let localRoundCrash = 2.0;
+
+    const botNames = [
+      'Shahid_99', 'AlexPro', 'CryptoKing', 'Zeeshan77', 'Vikram_G', 'Dragon_X',
+      'Hamza_92', 'Sultan786', 'JackpotHunter', 'AliRaza', 'NeonRider', 'WinnerBro',
+      'Farhan_K', 'SpeedDemon', 'Tariq_77', 'Elena_V', 'BabarFan', 'Omega_Bet'
+    ];
+
+    const generateRandomCrash = () => {
+      const rand = Math.random();
+      if (rand < 0.04) return 1.00;
+      const point = parseFloat((0.96 / (1 - rand)).toFixed(2));
+      return Math.min(100.0, Math.max(1.02, point));
+    };
+
+    const generateBotBets = () => {
+      const count = Math.floor(Math.random() * 8) + 6;
+      const list = [];
+      for (let i = 0; i < count; i++) {
+        const name = botNames[Math.floor(Math.random() * botNames.length)];
+        const amt = [50, 100, 200, 500, 1000, 2000, 5000][Math.floor(Math.random() * 7)];
+        const auto = Math.random() < 0.4 ? parseFloat((Math.random() * 3 + 1.2).toFixed(2)) : null;
+        list.push({
+          id: `bot_bet_${Date.now()}_${i}`,
+          username: name,
+          amount: amt,
+          autoCashout: auto,
+          cashedOut: false
+        });
+      }
+      return list;
+    };
+
+    const startWaitingPhase = () => {
+      setGameState('WAITING');
+      gameStateRef.current = 'WAITING';
+      smoothMultiplierRef.current = 1.00;
+      targetMultiplierRef.current = 1.00;
+      setMultiplier(1.00);
+      setCrashedAt(null);
+      flewAwayPos.current.isFlyingOff = false;
+      setBet1(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
+      setBet2(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
+      setBets(generateBotBets());
+
+      let count = 5.0;
+      setCountdown(count);
+
+      const waitInterval = setInterval(() => {
+        count = Math.max(0, parseFloat((count - 0.5).toFixed(1)));
+        setCountdown(count);
+        if (count <= 3 && count > 0 && Math.floor(count) === count) {
+          soundFx.playCountdownTick();
+        }
+        if (count <= 0) {
+          clearInterval(waitInterval);
+          startFlyingPhase();
+        }
+      }, 500);
+      timer = waitInterval;
+    };
+
+    const startFlyingPhase = () => {
+      localRoundCrash = generateRandomCrash();
+      setGameState('FLYING');
+      gameStateRef.current = 'FLYING';
+      const flightStart = Date.now();
+      flightStartTimeRef.current = flightStart;
+      smoothMultiplierRef.current = 1.00;
+      targetMultiplierRef.current = 1.00;
+      setMultiplier(1.00);
+      flewAwayPos.current.isFlyingOff = false;
+
+      const flyInterval = setInterval(() => {
+        const elapsedSec = (Date.now() - flightStart) / 1000;
+        const currentM = parseFloat(Math.pow(Math.E, 0.072 * elapsedSec * 1.65).toFixed(2));
+        targetMultiplierRef.current = currentM;
+        smoothMultiplierRef.current = currentM;
+        setMultiplier(currentM);
+
+        // Auto cashout check for bet1 and bet2
+        setBet1(prev => {
+          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && currentM >= prev.autoCashout) {
+            const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
+            onBalanceUpdate(balance + payout);
+            soundFx.playCashout();
+            confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
+            return { ...prev, hasCashedOut: true, cashoutPayout: payout, cashoutMultiplier: prev.autoCashout };
+          }
+          return prev;
+        });
+
+        setBet2(prev => {
+          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && currentM >= prev.autoCashout) {
+            const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
+            onBalanceUpdate(balance + payout);
+            soundFx.playCashout();
+            confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
+            return { ...prev, hasCashedOut: true, cashoutPayout: payout, cashoutMultiplier: prev.autoCashout };
+          }
+          return prev;
+        });
+
+        // Crash check
+        if (currentM >= localRoundCrash) {
+          clearInterval(flyInterval);
+          handleLocalCrash(localRoundCrash);
+        }
+      }, 100);
+      timer = flyInterval;
+    };
+
+    const handleLocalCrash = (crashedVal) => {
+      setGameState('CRASHED');
+      gameStateRef.current = 'CRASHED';
+      setCrashedAt(crashedVal);
+      smoothMultiplierRef.current = crashedVal;
+      targetMultiplierRef.current = crashedVal;
+      setMultiplier(crashedVal);
+      flewAwayPos.current.isFlyingOff = true;
+      soundFx.playCrash();
+      setHistory(prev => [crashedVal, ...prev.slice(0, 11)]);
+
+      // Wait 3.5s then start next waiting phase
+      timer = setTimeout(() => {
+        startWaitingPhase();
+      }, 3500);
+    };
+
+    startWaitingPhase();
+
+    return () => {
+      clearInterval(timer);
+      clearTimeout(timer);
+    };
+  }, [socket, balance, onBalanceUpdate]);
+
 
   // ==================== OFFICIAL AVIATOR RED AIRPLANE CANVAS ====================
   useEffect(() => {

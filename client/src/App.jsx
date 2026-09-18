@@ -26,37 +26,54 @@ export default function App() {
 
   // Connect socket and load user
   useEffect(() => {
-    const CLOUDFLARE_BACKEND = 'https://accompanied-residential-colored-witnesses.trycloudflare.com';
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || (isLocal ? 'http://localhost:5000' : CLOUDFLARE_BACKEND);
-    const newSocket = io(backendUrl, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000
-    });
-    setSocket(newSocket);
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || (isLocal ? 'http://localhost:5000' : '');
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || (isLocal ? 'http://localhost:5000' : null);
+
+    let newSocket = null;
+    if (socketUrl) {
+      newSocket = io(socketUrl, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 10000
+      });
+      setSocket(newSocket);
+    }
 
     const token = localStorage.getItem('luckywin_token');
     if (token) {
-      fetch(`${backendUrl}/api/auth/me`, {
+      const meUrl = backendUrl ? `${backendUrl}/api/auth/me` : '/api/auth/me';
+      fetch(meUrl, {
         headers: { Authorization: `Bearer ${token}` }
       })
-        .then(res => res.json())
+        .then(async res => {
+          if (!res.ok) throw new Error('Auth failed');
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return res.json();
+          }
+          throw new Error('Not JSON');
+        })
         .then(data => {
-          if (data.user) {
+          if (data && data.user) {
             setUser(data.user);
             setBalance(data.user.balance);
           } else {
             localStorage.removeItem('luckywin_token');
           }
         })
-        .catch(console.error);
+        .catch(() => {
+          // Token invalid or server offline
+          localStorage.removeItem('luckywin_token');
+        });
     }
 
-    return () => newSocket.close();
+    return () => {
+      if (newSocket) newSocket.close();
+    };
   }, []);
 
   const handleAuthSuccess = (userData) => {
