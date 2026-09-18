@@ -8,7 +8,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
   // Game State from Socket
   const [gameState, setGameState] = useState('WAITING'); // 'WAITING' | 'STARTING' | 'FLYING' | 'CRASHED'
   const [multiplier, setMultiplier] = useState(1.00);
-  const [countdown, setCountdown] = useState(3.5);
+  const [countdown, setCountdown] = useState(5.0);
   const [history, setHistory] = useState([1.45, 2.80, 1.10, 14.50, 3.20, 1.95, 5.80, 1.05, 32.10, 2.15, 8.40, 1.72]);
   const [bets, setBets] = useState([]);
   const [onlinePlayers, setOnlinePlayers] = useState(1842);
@@ -66,7 +66,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     socket.on('crash:state_change', (data) => {
       setGameState(data.state);
       setMultiplier(data.currentMultiplier || 1.00);
-      setCountdown(data.countdown || 3.5);
+      setCountdown(data.countdown || 5.0);
       if (data.history) setHistory(data.history);
       if (data.bets) setBets(data.bets);
       if (data.serverSeedHash) setServerSeedHash(data.serverSeedHash);
@@ -798,7 +798,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
                   <div className="w-48 h-1.5 bg-[#141824] rounded-full mt-3 overflow-hidden border border-[#1e2538] mx-auto">
                     <div
                       className="h-full bg-[#ff1a40] transition-all duration-100"
-                      style={{ width: `${(countdown / 3.5) * 100}%` }}
+                      style={{ width: `${(countdown / 5.0) * 100}%` }}
                     />
                   </div>
                 </div>

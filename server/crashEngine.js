@@ -43,7 +43,9 @@ class CrashEngine {
 
   initNextRound() {
     this.state = 'WAITING';
-    this.countdown = 3.5; // Fast 3.5s countdown
+    this.waitingDuration = 5.0; // Steady 5 seconds countdown
+    this.waitingStartTime = Date.now();
+    this.countdown = 5.0;
     this.currentMultiplier = 1.00;
     this.serverSeed = generateServerSeed();
     this.serverSeedHash = hashSeed(this.serverSeed);
@@ -140,11 +142,12 @@ class CrashEngine {
 
     setInterval(() => {
       if (this.state === 'WAITING') {
-        this.countdown = Math.max(0, parseFloat((this.countdown - (TICK_RATE / 1000)).toFixed(2)));
+        const elapsed = (Date.now() - (this.waitingStartTime || Date.now())) / 1000;
+        this.countdown = Math.max(0, parseFloat(((this.waitingDuration || 5.0) - elapsed).toFixed(1)));
         
-        // Fast streaming of incoming bets during countdown
+        // Streaming of incoming bets during countdown
         streamTick++;
-        if (streamTick % 4 === 0 && this.countdown > 0.4) {
+        if (streamTick % 6 === 0 && this.countdown > 0.5) {
           this.injectStreamedBet();
         }
 
@@ -155,7 +158,7 @@ class CrashEngine {
             this.state = 'FLYING';
             this.flightStartTime = Date.now();
             this.broadcastState();
-          }, 400); // Fast 400ms launch
+          }, 600); // Steady 600ms launch
         } else {
           this.io.emit('crash:waiting_tick', {
             countdown: this.countdown,
@@ -346,10 +349,10 @@ class CrashEngine {
       onlinePlayers: this.onlinePlayers
     });
 
-    // Fast 2.0 seconds pause before starting the next round
+    // 1.5s pause to display "FLEW AWAY" before 5.0s countdown begins
     setTimeout(() => {
       this.initNextRound();
-    }, 2000);
+    }, 1500);
   }
 
   manualCrashNow() {
