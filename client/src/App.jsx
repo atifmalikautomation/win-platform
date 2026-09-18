@@ -26,8 +26,17 @@ export default function App() {
 
   // Connect socket and load user
   useEffect(() => {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || (window.location.origin.includes('localhost:3000') ? 'http://localhost:5000' : window.location.origin);
-    const newSocket = io(backendUrl);
+    const CLOUDFLARE_BACKEND = 'https://accompanied-residential-colored-witnesses.trycloudflare.com';
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || (isLocal ? 'http://localhost:5000' : CLOUDFLARE_BACKEND);
+    const newSocket = io(backendUrl, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000
+    });
     setSocket(newSocket);
 
     const token = localStorage.getItem('luckywin_token');

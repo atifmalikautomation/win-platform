@@ -43,17 +43,17 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
   const lastCountdownSec = useRef(4);
   const canvasRef = useRef(null);
   const animationFrameId = useRef(null);
+  const flyingMultiplierTextRef = useRef(null);
+
+  // Smooth Multiplier Tracking (60 FPS monotonic advancement)
+  const smoothMultiplierRef = useRef(1.00);
+  const targetMultiplierRef = useRef(1.00);
+  const flightStartTimeRef = useRef(0);
+  const gameStateRef = useRef(gameState);
+  const lastReactMultiplierUpdate = useRef(0);
 
   // Aviator Flew Away Fly-Off Animation
   const flewAwayPos = useRef({ x: 0, y: 0, isFlyingOff: false });
-
-  // Refs for 60fps Canvas render loop (prevents 20x/sec re-renders)
-  const multiplierRef = useRef(multiplier);
-  const gameStateRef = useRef(gameState);
-
-  useEffect(() => {
-    multiplierRef.current = multiplier;
-  }, [multiplier]);
 
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -63,27 +63,47 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
   useEffect(() => {
     if (!socket) return;
 
-    socket.on('crash:state_change', (data) => {
+    const handleStateChange = (data) => {
       setGameState(data.state);
-      setMultiplier(data.currentMultiplier || 1.00);
-      setCountdown(data.countdown || 5.0);
+      gameStateRef.current = data.state;
       if (data.history) setHistory(data.history);
       if (data.bets) setBets(data.bets);
       if (data.serverSeedHash) setServerSeedHash(data.serverSeedHash);
       if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
 
       if (data.state === 'WAITING') {
-        setBet1(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
-        setBet2(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
+        setCountdown(data.countdown || 5.0);
+        smoothMultiplierRef.current = 1.00;
+        targetMultiplierRef.current = 1.00;
+        setMultiplier(1.00);
         setCrashedAt(null);
         flewAwayPos.current.isFlyingOff = false;
-      } else if (data.state === 'FLYING') {
+        setBet1(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
+        setBet2(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
+      } else if (data.state === 'STARTING') {
+        smoothMultiplierRef.current = 1.00;
+        targetMultiplierRef.current = 1.00;
+        setMultiplier(1.00);
         flewAwayPos.current.isFlyingOff = false;
+      } else if (data.state === 'FLYING') {
+        flightStartTimeRef.current = data.flightStartTime || Date.now();
+        const curM = Math.max(1.00, data.currentMultiplier || 1.00);
+        smoothMultiplierRef.current = curM;
+        targetMultiplierRef.current = curM;
+        flewAwayPos.current.isFlyingOff = false;
+      } else if (data.state === 'CRASHED') {
+        const cVal = data.crashedAt || data.currentMultiplier || smoothMultiplierRef.current;
+        setCrashedAt(cVal);
+        smoothMultiplierRef.current = cVal;
+        targetMultiplierRef.current = cVal;
+        setMultiplier(cVal);
+        flewAwayPos.current.isFlyingOff = true;
       }
-    });
+    };
 
-    socket.on('crash:waiting_tick', (data) => {
+    const handleWaitingTick = (data) => {
       setGameState('WAITING');
+      gameStateRef.current = 'WAITING';
       setCountdown(data.countdown);
       if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
 
@@ -92,29 +112,43 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         lastCountdownSec.current = currentSec;
         soundFx.playCountdownTick();
       }
-    });
+    };
 
-    socket.on('crash:tick', (data) => {
-      setGameState('FLYING');
-      setMultiplier(data.multiplier);
-      if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
-    });
+    const handleTick = (data) => {
+      gameStateRef.current = 'FLYING';
+      if (data.flightStartTime) flightStartTimeRef.current = data.flightStartTime;
+      targetMultiplierRef.current = Math.max(targetMultiplierRef.current, data.multiplier);
 
-    socket.on('crash:crashed', (data) => {
+      // Throttle React state updates to 10 FPS so dual bet panel live payout updates smoothly without causing React render lag
+      const now = Date.now();
+      if (now - lastReactMultiplierUpdate.current > 100) {
+        lastReactMultiplierUpdate.current = now;
+        setMultiplier(smoothMultiplierRef.current);
+        if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
+      }
+    };
+
+    const handleCrashed = (data) => {
       setGameState('CRASHED');
+      gameStateRef.current = 'CRASHED';
       setCrashedAt(data.crashedAt);
+      smoothMultiplierRef.current = data.crashedAt;
+      targetMultiplierRef.current = data.crashedAt;
       setMultiplier(data.crashedAt);
       if (data.history) setHistory(data.history);
       if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
 
       soundFx.playCrash();
       flewAwayPos.current.isFlyingOff = true;
-    });
+    };
 
+    socket.on('crash:state_change', handleStateChange);
+    socket.on('crash:waiting_tick', handleWaitingTick);
+    socket.on('crash:tick', handleTick);
+    socket.on('crash:crashed', handleCrashed);
     socket.on('crash:new_bet', (data) => {
       setBets(prev => [data.bet, ...prev]);
     });
-
     socket.on('crash:bet_cashed_out', (data) => {
       setBets(prev =>
         prev.map(b => (b.id === data.betId ? { ...b, cashedOut: true, cashoutMultiplier: data.multiplier, payout: data.payout } : b))
@@ -158,118 +192,18 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       }
     });
 
-    // Request fresh state on mount / tab switch
     socket.emit('crash:request_state');
 
     return () => {
       soundFx.stopFlightSound();
-      socket.off('crash:state_change');
-      socket.off('crash:waiting_tick');
-      socket.off('crash:tick');
-      socket.off('crash:crashed');
+      socket.off('crash:state_change', handleStateChange);
+      socket.off('crash:waiting_tick', handleWaitingTick);
+      socket.off('crash:tick', handleTick);
+      socket.off('crash:crashed', handleCrashed);
       socket.off('crash:new_bet');
       socket.off('crash:bet_cashed_out');
     };
   }, [socket, user, onBalanceUpdate]);
-
-  // Autonomous fallback loop for Vercel serverless static environments
-  useEffect(() => {
-    let lastEventTime = Date.now();
-    const touch = () => { lastEventTime = Date.now(); };
-    if (socket) {
-      socket.on('crash:waiting_tick', touch);
-      socket.on('crash:tick', touch);
-      socket.on('crash:crashed', touch);
-      socket.on('crash:state_change', touch);
-    }
-
-    let localState = 'WAITING';
-    let localCountdown = 3.5;
-    let localMultiplier = 1.00;
-    let localCrashTarget = 2.45;
-    let flightStart = 0;
-
-    const botNames = [
-      'Ali_Raza', 'Hamza_92', 'Sultan786', 'Babar_King', 'Malik_786', 'Kamran_VIP',
-      'Rizwan_Master', 'Saad_Pro', 'Zahid_99', 'Fahad_Ace', 'Daniyal_X', 'Ahsan_Gold',
-      'Kashif_Trader', 'Waqas_77', 'Imran_Winner', 'AlexPro', 'CryptoKing', 'Elena_V'
-    ];
-
-    const generateLocalBets = () => {
-      const b = [];
-      const count = Math.floor(Math.random() * 25) + 40;
-      for (let i = 0; i < count; i++) {
-        const amt = [100, 200, 500, 1000, 2500, 5000][Math.floor(Math.random() * 6)];
-        const target = parseFloat((1.15 + Math.random() * 5.0).toFixed(2));
-        b.push({
-          id: `local_bet_${i}_${Date.now()}`,
-          username: botNames[i % botNames.length] || `Player_${i}`,
-          amount: amt,
-          targetMultiplier: target,
-          cashedOut: false,
-          cashoutMultiplier: null,
-          payout: 0,
-          isBot: true
-        });
-      }
-      return b;
-    };
-
-    const timer = setInterval(() => {
-      // If socket is actively communicating, don't run fallback
-      if (Date.now() - lastEventTime < 3000) return;
-
-      if (localState === 'WAITING') {
-        localCountdown = Math.max(0, localCountdown - 0.1);
-        setCountdown(parseFloat(localCountdown.toFixed(1)));
-        setGameState('WAITING');
-
-        if (localCountdown <= 0) {
-          localState = 'STARTING';
-          setGameState('STARTING');
-          setTimeout(() => {
-            localState = 'FLYING';
-            setGameState('FLYING');
-            flightStart = Date.now();
-            localMultiplier = 1.00;
-            localCrashTarget = parseFloat((1.15 + Math.pow(Math.random(), 2) * 12.0).toFixed(2));
-            soundFx.startFlightSound();
-          }, 400);
-        }
-      } else if (localState === 'FLYING') {
-        const elapsed = (Date.now() - flightStart) / 1000;
-        localMultiplier = parseFloat(Math.pow(Math.E, 0.075 * elapsed * 1.6).toFixed(2));
-        setMultiplier(localMultiplier);
-        soundFx.updateFlightPitch(localMultiplier);
-
-        // Check crash
-        if (localMultiplier >= localCrashTarget) {
-          localState = 'CRASHED';
-          setGameState('CRASHED');
-          setCrashedAt(localCrashTarget);
-          setMultiplier(localCrashTarget);
-          soundFx.playCrash();
-          setHistory(prev => [localCrashTarget, ...prev.slice(0, 11)]);
-
-          setTimeout(() => {
-            localState = 'WAITING';
-            localCountdown = 3.5;
-            setBets(generateLocalBets());
-          }, 2000);
-        }
-      }
-    }, 100);
-
-    return () => {
-      clearInterval(timer);
-      if (socket) {
-        socket.off('crash:waiting_tick', touch);
-        socket.off('crash:tick', touch);
-        socket.off('crash:crashed', touch);
-        socket.off('crash:state_change', touch);
-      }
-    };
-  }, [socket]);
 
 
   // ==================== OFFICIAL AVIATOR RED AIRPLANE CANVAS ====================
@@ -307,6 +241,32 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
 
     const render = () => {
       propellerAngle += 0.5;
+      const curState = gameStateRef.current;
+      const wallNow = Date.now();
+      const perfNow = performance.now();
+
+      // Multiplier smooth continuous advance (60 FPS monotonic)
+      if (curState === 'FLYING') {
+        if (flightStartTimeRef.current > 0) {
+          const elapsedSec = Math.max(0, (wallNow - flightStartTimeRef.current) / 1000);
+          const theoreticalMult = Math.pow(Math.E, 0.072 * elapsedSec * 1.65);
+          const target = Math.max(targetMultiplierRef.current, theoreticalMult);
+          if (target > smoothMultiplierRef.current) {
+            const step = Math.max(0.002, (target - smoothMultiplierRef.current) * 0.22);
+            smoothMultiplierRef.current = Math.min(target, smoothMultiplierRef.current + step);
+          }
+        } else {
+          if (targetMultiplierRef.current > smoothMultiplierRef.current) {
+            smoothMultiplierRef.current += (targetMultiplierRef.current - smoothMultiplierRef.current) * 0.2;
+          }
+        }
+
+        // Direct DOM update: buttery 60 FPS text without React overhead
+        if (flyingMultiplierTextRef.current) {
+          flyingMultiplierTextRef.current.textContent = smoothMultiplierRef.current.toFixed(2);
+        }
+      }
+
       ctx.clearRect(0, 0, width, height);
 
       // 1. Aviator Deep Dark Red/Black Atmospheric Gradient
@@ -317,14 +277,14 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      const curState = gameStateRef.current;
-      const curMult = multiplierRef.current;
+      const curMult = smoothMultiplierRef.current;
 
       // 2. Stars / Cosmic Dust
       stars.forEach(star => {
         if (curState === 'FLYING') {
-          star.x -= star.speed * (curMult > 5 ? 6 : curMult > 2 ? 3.5 : 1.8);
-          star.y += star.speed * 0.6;
+          const speedFactor = Math.min(7.0, 1.6 + (curMult - 1.0) * 0.75);
+          star.x -= star.speed * speedFactor;
+          star.y += star.speed * 0.4;
         } else {
           star.x -= star.speed * 0.2;
         }
@@ -333,7 +293,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         if (star.y > height + 10) star.y = -5;
 
         ctx.fillStyle = '#64748b';
-        ctx.globalAlpha = 0.4;
+        ctx.globalAlpha = 0.35;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
         ctx.fill();
@@ -356,24 +316,46 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         ctx.stroke();
       }
 
-      // 4. Flight Curve & Plane Calculation
+      // 4. Flight Curve & Aerodynamic Plane Calculation
       const startX = 50;
       const startY = height - 65;
 
-      const targetX = Math.min(width - 110, 50 + (curMult - 1.0) * 85);
-      const targetY = Math.max(65, (height - 65) - Math.pow(curMult - 1.0, 0.76) * 65);
+      // Cruising station coordinates (65% width, 36% height)
+      const cruiseX = width * (width < 640 ? 0.62 : 0.68);
+      const cruiseY = height * 0.36;
 
+      // Takeoff ratio: from 1.00x to 2.20x
+      const takeoffRatio = Math.min(1.0, Math.max(0, (curMult - 1.0) / 1.2));
+      const takeoffEase = takeoffRatio * (2 - takeoffRatio); // easeOutQuad
+
+      // Subtle aerodynamic hover breathing motion
+      const hoverTime = perfNow * 0.0022;
+      const hoverX = Math.cos(hoverTime * 1.1) * 4.5;
+      const hoverY = Math.sin(hoverTime * 1.5) * 5.5;
+
+      // Dynamic forward climb drift for higher multipliers
+      const highMultExtraX = Math.min(width * 0.12, Math.max(0, (curMult - 2.2) * 1.5));
+      const highMultExtraY = -Math.min(height * 0.10, Math.max(0, (curMult - 2.2) * 1.8));
+
+      let targetX, targetY;
       if (curState === 'FLYING') {
-        // Continuous silky-smooth 60fps interpolation (eliminates 50ms socket tick lag)
-        const lerpFactor = 0.22;
+        if (takeoffRatio < 1.0) {
+          targetX = startX + (cruiseX - startX) * takeoffEase;
+          targetY = startY - (startY - cruiseY) * takeoffEase;
+        } else {
+          targetX = cruiseX + highMultExtraX + hoverX;
+          targetY = cruiseY + highMultExtraY + hoverY;
+        }
+
+        const lerpFactor = 0.18;
         planeX += (targetX - planeX) * lerpFactor;
         planeY += (targetY - planeY) * lerpFactor;
         flewAwayPos.current.x = planeX;
         flewAwayPos.current.y = planeY;
       } else if (curState === 'CRASHED' && flewAwayPos.current.isFlyingOff) {
-        // Plane accelerates forward off-screen into the distance
-        flewAwayPos.current.x += 26;
-        flewAwayPos.current.y -= 5;
+        // Accelerate smoothly forward & up into the distance
+        flewAwayPos.current.x += 28;
+        flewAwayPos.current.y -= 7;
         planeX = flewAwayPos.current.x;
         planeY = flewAwayPos.current.y;
       } else if (curState === 'WAITING' || curState === 'STARTING') {
@@ -383,14 +365,16 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
 
       // Draw Red Trajectory Curve matching planeX and planeY
       if ((curState === 'FLYING' || curState === 'CRASHED') && planeX > startX) {
-        // Red glow area under curve
         const curveGrad = ctx.createLinearGradient(0, planeY, 0, height - 65);
         curveGrad.addColorStop(0, 'rgba(230, 0, 38, 0.22)');
         curveGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
+        const controlX = startX + (planeX - startX) * 0.45;
+        const controlY = startY;
+
         ctx.beginPath();
         ctx.moveTo(startX, startY);
-        ctx.quadraticCurveTo(startX + (planeX - startX) * 0.35, startY, planeX, planeY);
+        ctx.quadraticCurveTo(controlX, controlY, planeX, planeY);
         ctx.lineTo(planeX, height - 65);
         ctx.lineTo(startX, height - 65);
         ctx.closePath();
@@ -400,7 +384,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         // Aviator Red Solid Curve Line
         ctx.beginPath();
         ctx.moveTo(startX, startY);
-        ctx.quadraticCurveTo(startX + (planeX - startX) * 0.35, startY, planeX, planeY);
+        ctx.quadraticCurveTo(controlX, controlY, planeX, planeY);
         ctx.strokeStyle = '#e60026';
         ctx.lineWidth = 3.5;
         ctx.shadowColor = '#ff1a40';
@@ -419,7 +403,6 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
             });
           }
 
-          // Draw condensation trails
           for (let i = wingTrails.length - 1; i >= 0; i--) {
             const t = wingTrails[i];
             t.x -= 3.2;
@@ -443,11 +426,10 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
           ctx.save();
           ctx.translate(planeX, planeY);
 
-          // Calculate Dynamic Climb Angle along curve
-          // Authentic Aviator climb: gentle forward glide between -0.05 and -0.18 radians (-3 deg to -10 deg)
+          // Authentic Aviator climb angle
           const climbAngle = curState === 'FLYING'
-            ? Math.max(-0.18, -Math.atan2((height - 65) - targetY, Math.max(1, targetX - startX)) * 0.3)
-            : -0.12; // Smooth horizontal zoom off-screen
+            ? (takeoffRatio < 1.0 ? -0.14 : -0.06 + Math.sin(hoverTime * 1.5) * 0.02)
+            : -0.12;
           ctx.rotate(climbAngle);
 
           // === DRAW AUTHENTIC AVIATOR RED PLANE ===
@@ -657,15 +639,16 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     const setPanel = panelNum === 1 ? setBet1 : setBet2;
     if (!panel.placedBet) return;
 
+    const currentMultiplier = smoothMultiplierRef.current || multiplier;
     if (!socket || !socket.connected) {
-      const payout = parseFloat((panel.amount * multiplier).toFixed(2));
+      const payout = parseFloat((panel.amount * currentMultiplier).toFixed(2));
       const newBal = balance + payout;
       onBalanceUpdate(newBal);
       setPanel(prev => ({
         ...prev,
         hasCashedOut: true,
         cashoutPayout: payout,
-        cashoutMultiplier: multiplier
+        cashoutMultiplier: currentMultiplier
       }));
       soundFx.playCashout();
       confetti({
@@ -822,7 +805,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
               {gameState === 'FLYING' && (
                 <div className="text-center">
                   <div className="text-7xl sm:text-8xl lg:text-9xl font-black text-white font-heading tracking-tight drop-shadow-md">
-                    {multiplier.toFixed(2)}<span className="text-[#ff1a40]">x</span>
+                    <span ref={flyingMultiplierTextRef}>{multiplier.toFixed(2)}</span><span className="text-[#ff1a40]">x</span>
                   </div>
                 </div>
               )}

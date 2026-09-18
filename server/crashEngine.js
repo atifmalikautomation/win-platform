@@ -191,6 +191,7 @@ class CrashEngine {
         } else {
           this.io.emit('crash:tick', {
             multiplier: this.currentMultiplier,
+            flightStartTime: this.flightStartTime,
             onlinePlayers: this.onlinePlayers
           });
         }
@@ -296,6 +297,8 @@ class CrashEngine {
       state: this.state,
       countdown: this.countdown,
       currentMultiplier: this.currentMultiplier,
+      crashedAt: this.state === 'CRASHED' ? this.crashedAt : null,
+      flightStartTime: this.flightStartTime,
       serverSeedHash: this.serverSeedHash,
       nonce: this.nonce,
       history: this.history,
