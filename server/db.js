@@ -57,8 +57,8 @@ function initDB() {
         email: 'player@example.com',
         passwordHash: defaultUserPassword,
         role: 'user',
-        balance: 2500.0,
-        bonusBalance: 500.0,
+        balance: 0.0,
+        bonusBalance: 0.0,
         createdAt: new Date().toISOString(),
         isBanned: false
       }
@@ -147,7 +147,7 @@ function findUserByEmail(email) {
   return db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
 }
 
-function createUser({ username, email, password, role = 'user', initialBalance = 1000.0 }) {
+function createUser({ username, email, password, role = 'user', initialBalance = 0.0 }) {
   const db = readDB();
   const newUser = {
     id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -156,7 +156,7 @@ function createUser({ username, email, password, role = 'user', initialBalance =
     passwordHash: bcrypt.hashSync(password, 10),
     role,
     balance: Number(initialBalance),
-    bonusBalance: 200.0, // Welcome bonus
+    bonusBalance: 0.0,
     createdAt: new Date().toISOString(),
     isBanned: false
   };

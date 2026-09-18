@@ -67,5 +67,5 @@ Then open:
 | Role | Username | Password | Initial Balance | Permissions |
 | :--- | :--- | :--- | :--- | :--- |
 | **Super Admin** | `admin` | `admin123` | PKR 100,000 | Full Back Office, Cashier approvals, RTP slider |
-| **Demo Player** | `LuckyPlayer` | `user123` | PKR 2,500 | Playing games, depositing, withdrawing |
-| **New Register** | *(Any username)* | *(Any)* | PKR 1,500 | Automatic welcome bonus credited |
+| **Demo Player** | `LuckyPlayer` | `user123` | PKR 0.0 | Playing games, depositing, withdrawing |
+| **New Register** | *(Any username)* | *(Any)* | PKR 0.0 | Starts with PKR 0 balance (no bonus credited) |

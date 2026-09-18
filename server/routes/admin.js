@@ -81,6 +81,57 @@ router.get('/users', authenticateToken, requireAdmin, (req, res) => {
   res.json({ users: safeUsers });
 });
 
+// Sync local users to server database
+router.post('/sync-users', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const { users } = req.body;
+    if (Array.isArray(users)) {
+      const currentDb = db.readDB();
+      let added = 0;
+      users.forEach(u => {
+        const usernameClean = (u.username || '').toLowerCase();
+        const emailClean = (u.email || '').toLowerCase();
+        const exists = currentDb.users.some(existing => 
+          existing.id === u.id || 
+          (emailClean && existing.email && existing.email.toLowerCase() === emailClean) || 
+          (usernameClean && existing.username && existing.username.toLowerCase() === usernameClean)
+        );
+        if (!exists && (usernameClean || emailClean)) {
+          currentDb.users.push({
+            id: u.id || `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+            username: u.username,
+            email: u.email || '',
+            passwordHash: '$2b$10$Whzk8jMkMaVStBl1AONWpOuftjz2u.8BS1RKXrErlLP5aWtUZXFu2',
+            role: u.role || 'user',
+            balance: Number(u.balance || 0),
+            bonusBalance: Number(u.bonusBalance || 0),
+            createdAt: u.createdAt || new Date().toISOString(),
+            isBanned: !!u.isBanned
+          });
+          added++;
+        }
+      });
+      if (added > 0) {
+        db.writeDB(currentDb);
+      }
+    }
+    const currentDb = db.readDB();
+    const safeUsers = currentDb.users.map(u => ({
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      role: u.role,
+      balance: u.balance,
+      bonusBalance: u.bonusBalance,
+      createdAt: u.createdAt,
+      isBanned: u.isBanned
+    }));
+    res.json({ message: 'Users synced successfully', users: safeUsers });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Manual Balance Adjustment or Ban user
 router.post('/users/:id/action', authenticateToken, requireAdmin, (req, res) => {
   try {

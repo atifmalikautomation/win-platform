@@ -82,8 +82,8 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
             email: cleanEmail,
             password: password,
             role: cleanUsername.toLowerCase().includes('admin') ? 'admin' : 'user',
-            balance: 1500.0, // Instant play PKR 1,500 bonus
-            bonusBalance: 500.0,
+            balance: 0.0, // No bonus added
+            bonusBalance: 0.0,
             createdAt: new Date().toISOString()
           };
 
@@ -104,8 +104,8 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
               username: 'LuckyPlayer',
               email: 'player@example.com',
               role: 'user',
-              balance: 2500.0,
-              bonusBalance: 500.0
+              balance: 0.0,
+              bonusBalance: 0.0
             };
           } else if (!userFound && (cleanId === 'saqib_admin' || cleanId === '60secscriptdoc@gmail.com') && password === 'SkyWin#Saqib2026!') {
             userFound = {
@@ -128,12 +128,13 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
 
       if (data && data.user) {
         localStorage.setItem('luckywin_token', data.token);
-        localStorage.setItem('luckywin_active_user', JSON.stringify(data.user));
-        onAuthSuccess(data.user);
+        if (onAuthSuccess) {
+          onAuthSuccess(data.user);
+        }
         onClose();
       }
     } catch (err) {
-      setError(err.message || 'Authentication error');
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -141,36 +142,51 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
 
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="relative w-full max-w-md bg-[#0e131f] border border-slate-800 rounded-3xl p-6 lg:p-8 shadow-2xl shadow-blue-500/10">
-        
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="relative w-full max-w-md p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-[#161d2d] to-[#0d121d] border border-[#232f48] shadow-2xl overflow-hidden">
+        {/* Glow Accent */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-20 bg-[#1a68ff]/20 blur-3xl pointer-events-none" />
+
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+          className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
 
+        {/* Header */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[#1a68ff]/20 border border-[#1a68ff]/30 text-[#1a68ff] mb-3">
+            <Lock className="w-6 h-6" />
+          </div>
+          <h2 className="font-heading font-black text-2xl text-white tracking-tight">
+            {isAdminMode ? 'SkyWin Admin' : (mode === 'login' ? 'Welcome Back' : 'Create Account')}
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">
+            {isAdminMode ? 'Enter authorized credentials' : (mode === 'login' ? 'Login to continue playing' : 'Join thousands of real players in Pakistan')}
+          </p>
+        </div>
+
         {/* Header Tabs */}
-        <div className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800/80 mb-6">
+        <div className="flex p-1 mb-6 rounded-2xl bg-[#0b0e17] border border-[#1c2436]">
           <button
             type="button"
             onClick={() => { setMode('login'); setError(''); }}
-            className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${
+            className={`flex-1 py-2 text-xs font-bold font-heading rounded-xl transition-all ${
               mode === 'login'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                ? 'bg-[#1a68ff] text-white shadow-lg'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            Log In
+            Login
           </button>
           <button
             type="button"
             onClick={() => { setMode('register'); setError(''); }}
-            className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${
+            className={`flex-1 py-2 text-xs font-bold font-heading rounded-xl transition-all ${
               mode === 'register'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                ? 'bg-[#1a68ff] text-white shadow-lg'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -178,15 +194,15 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
           </button>
         </div>
 
-        {/* Welcome Bonus Callout */}
+        {/* Registration Account Info Badge */}
         {mode === 'register' && (
-          <div className="mb-6 p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-cyan-500/15 border border-emerald-500/30 flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
-              <Sparkles className="w-5 h-5" />
+          <div className="mb-6 p-3.5 rounded-2xl bg-gradient-to-r from-blue-500/15 via-indigo-500/15 to-purple-500/15 border border-blue-500/30 flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400">
+              <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-xs font-bold text-emerald-300">🎉 500% Welcome Deposit Bonus</p>
-              <p className="text-[11px] text-slate-300">+ PKR 1,500 instant play balance on sign up!</p>
+              <p className="text-xs font-bold text-blue-300">Official Player Account</p>
+              <p className="text-[11px] text-slate-300">Fast deposits & 24/7 withdrawals via JazzCash, EasyPaisa & Bank</p>
             </div>
           </div>
         )}

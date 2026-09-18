@@ -15,7 +15,7 @@ import { soundFx } from './utils/soundEffects';
 export default function App() {
   const [activeTab, setActiveTab] = useState('crash'); // 'crash' | 'mines' | 'lobby' | 'admin'
   const [user, setUser] = useState(null);
-  const [balance, setBalance] = useState(2500.0);
+  const [balance, setBalance] = useState(0.0);
   const [socket, setSocket] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -48,7 +48,7 @@ export default function App() {
       try {
         const localUser = JSON.parse(savedUserStr);
         setUser(localUser);
-        setBalance(localUser.balance !== undefined ? localUser.balance : 1500.0);
+        setBalance(localUser.balance !== undefined ? localUser.balance : 0.0);
       } catch (e) {}
     }
 
@@ -85,7 +85,7 @@ export default function App() {
 
   const handleAuthSuccess = (userData) => {
     setUser(userData);
-    setBalance(userData.balance !== undefined ? userData.balance : 1500.0);
+    setBalance(userData.balance !== undefined ? userData.balance : 0.0);
     localStorage.setItem('luckywin_active_user', JSON.stringify(userData));
   };
 

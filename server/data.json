@@ -17,8 +17,8 @@
       "email": "player@example.com",
       "passwordHash": "$2b$10$Whzk8jMkMaVStBl1AONWpOuftjz2u.8BS1RKXrErlLP5aWtUZXFu2",
       "role": "user",
-      "balance": 2500.0,
-      "bonusBalance": 500.0,
+      "balance": 0.0,
+      "bonusBalance": 0.0,
       "createdAt": "2026-09-18T00:29:18.104Z",
       "isBanned": false
     }
