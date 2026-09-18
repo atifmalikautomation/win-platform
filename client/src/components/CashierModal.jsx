@@ -187,7 +187,7 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
       limits: '100 - 50,000 PKR',
       icon: <JazzCashIcon className="w-10 h-10" />,
       accountNum: '03005641699',
-      accountTitle: 'Saqib'
+      accountTitle: 'Muhammad Imtiaz'
     }
   ];
 

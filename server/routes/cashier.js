@@ -20,7 +20,7 @@ router.get('/config', (req, res) => {
         instructions: 'Send exact amount and upload payment screenshot with Transaction ID (TID)'
       },
       jazzcash: {
-        accountTitle: 'Saqib',
+        accountTitle: 'Muhammad Imtiaz',
         accountNumber: '03005641699',
         instructions: 'Send via JazzCash mobile app and submit the TID reference number'
       },
