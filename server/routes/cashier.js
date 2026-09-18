@@ -14,11 +14,6 @@ router.get('/config', (req, res) => {
       exchangeRatePkrPerUsdt: 280.0
     },
     local: {
-      easypaisa: {
-        accountTitle: 'Muhammad Imtiaz',
-        accountNumber: '03005641699',
-        instructions: 'Send exact amount and upload payment screenshot with Transaction ID (TID)'
-      },
       jazzcash: {
         accountTitle: 'Muhammad Imtiaz',
         accountNumber: '03005641699',

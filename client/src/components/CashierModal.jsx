@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Copy, Check, AlertCircle, CheckCircle2, Lock, UploadCloud, Trash2 } from 'lucide-react';
-import { EasyPaisaIcon, JazzCashIcon } from './PaymentIcons';
+import { JazzCashIcon } from './PaymentIcons';
 import { soundFx } from '../utils/soundEffects';
 
 export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', onBalanceUpdate }) {
@@ -62,19 +62,19 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
   };
 
   const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setStatusMessage({ type: 'error', text: 'Please upload a valid image file (.png, .jpg, .jpeg)' });
-      return;
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 15 * 1024 * 1024) {
+        setStatusMessage({ type: 'error', text: 'File size must be under 15MB' });
+        return;
+      }
+      setScreenshotFileName(file.name);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setScreenshotPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
     }
-    setScreenshotFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setScreenshotPreview(reader.result);
-      setStatusMessage(null);
-    };
-    reader.readAsDataURL(file);
   };
 
   const removeScreenshot = () => {
@@ -88,7 +88,7 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
     setStatusMessage(null);
 
     if (!screenshotPreview) {
-      setStatusMessage({ type: 'error', text: 'Please upload a payment screenshot proof from Easypaisa or JazzCash' });
+      setStatusMessage({ type: 'error', text: 'Please upload a payment screenshot proof from JazzCash' });
       return;
     }
 
@@ -178,16 +178,6 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
       icon: <JazzCashIcon className="w-10 h-10" />,
       accountNum: '03005641699',
       accountTitle: 'Muhammad Imtiaz'
-    },
-    {
-      id: 'easypaisa',
-      name: 'Easypaisa',
-      sub: 'Mobile Wallet',
-      fee: '0% fee',
-      limits: '100 - 50,000 PKR',
-      icon: <EasyPaisaIcon className="w-10 h-10" />,
-      accountNum: '03005641699',
-      accountTitle: 'Muhammad Imtiaz'
     }
   ];
 
@@ -275,7 +265,7 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
               </span>
 
               {/* Payment Methods Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2">
                 {paymentMethodsList.map((m) => {
                   const isSelected = depositMethod === m.id;
                   return (
@@ -418,7 +408,7 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
                       Click to upload payment screenshot
                     </span>
                     <span className="text-[10px] text-slate-500 mt-0.5">
-                      Upload receipt from Easypaisa or JazzCash (PNG, JPG)
+                      Upload receipt from JazzCash (PNG, JPG)
                     </span>
                   </label>
                 ) : (
@@ -483,10 +473,9 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
               <span className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 font-heading">
                 Payout Channel
               </span>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 gap-2.5">
                 {[
-                  { id: 'jazzcash', label: 'JazzCash', icon: <JazzCashIcon className="w-8 h-8" /> },
-                  { id: 'easypaisa', label: 'Easypaisa', icon: <EasyPaisaIcon className="w-8 h-8" /> }
+                  { id: 'jazzcash', label: 'JazzCash', icon: <JazzCashIcon className="w-8 h-8" /> }
                 ].map(m => (
                   <div
                     key={m.id}
@@ -520,14 +509,14 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
 
             <div>
               <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 font-heading">
-                Easypaisa / JazzCash Mobile Account Number
+                JazzCash Mobile Account Number
               </label>
               <input
                 type="text"
                 required
                 value={accountNumber}
                 onChange={(e) => setAccountNumber(e.target.value)}
-                placeholder="e.g. 03451234567"
+                placeholder="e.g. 03001234567"
                 className="w-full bg-[#0b0e15] border border-[#1c2233] focus:border-[#1a68ff] rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none font-mono"
               />
             </div>
