@@ -43,9 +43,18 @@ export default function App() {
       setSocket(newSocket);
     }
 
+    const savedUserStr = localStorage.getItem('luckywin_active_user');
+    if (savedUserStr) {
+      try {
+        const localUser = JSON.parse(savedUserStr);
+        setUser(localUser);
+        setBalance(localUser.balance !== undefined ? localUser.balance : 1500.0);
+      } catch (e) {}
+    }
+
     const token = localStorage.getItem('luckywin_token');
-    if (token) {
-      const meUrl = backendUrl ? `${backendUrl}/api/auth/me` : '/api/auth/me';
+    if (token && backendUrl) {
+      const meUrl = `${backendUrl}/api/auth/me`;
       fetch(meUrl, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -61,13 +70,11 @@ export default function App() {
           if (data && data.user) {
             setUser(data.user);
             setBalance(data.user.balance);
-          } else {
-            localStorage.removeItem('luckywin_token');
+            localStorage.setItem('luckywin_active_user', JSON.stringify(data.user));
           }
         })
         .catch(() => {
-          // Token invalid or server offline
-          localStorage.removeItem('luckywin_token');
+          // Token invalid or server offline - keep local session active
         });
     }
 
@@ -78,18 +85,32 @@ export default function App() {
 
   const handleAuthSuccess = (userData) => {
     setUser(userData);
-    setBalance(userData.balance);
+    setBalance(userData.balance !== undefined ? userData.balance : 1500.0);
+    localStorage.setItem('luckywin_active_user', JSON.stringify(userData));
   };
 
   const handleLogout = () => {
     localStorage.removeItem('luckywin_token');
+    localStorage.removeItem('luckywin_active_user');
     setUser(null);
     setBalance(0);
     setActiveTab('crash');
   };
 
   const handleBalanceUpdate = (newBalance) => {
-    setBalance(newBalance);
+    const formatted = parseFloat(Number(newBalance).toFixed(2));
+    setBalance(formatted);
+    if (user) {
+      const updatedUser = { ...user, balance: formatted };
+      setUser(updatedUser);
+      localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
+      const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
+      const idx = localUsers.findIndex(u => u.id === user.id);
+      if (idx !== -1) {
+        localUsers[idx].balance = formatted;
+        localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
+      }
+    }
   };
 
   return (

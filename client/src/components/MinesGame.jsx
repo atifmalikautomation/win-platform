@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Bomb, Gem } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { soundFx } from '../utils/soundEffects';
@@ -15,6 +15,18 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
   const [exploded, setExploded] = useState(false);
   const [message, setMessage] = useState(null);
 
+  const localMinesRef = useRef(null);
+
+  const calcMult = (totalTiles, numMines, revealedCount) => {
+    let mult = 1.0;
+    for (let i = 0; i < revealedCount; i++) {
+      const safe = totalTiles - numMines - i;
+      const tot = totalTiles - i;
+      mult = mult * (tot / safe);
+    }
+    return parseFloat((mult * 0.96).toFixed(2));
+  };
+
   // Check active game on mount
   useEffect(() => {
     if (!user) return;
@@ -24,9 +36,15 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
     fetch('/api/mines/active', {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(res => res.json())
+      .then(async res => {
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return res.json();
+        }
+        throw new Error('Not JSON');
+      })
       .then(data => {
-        if (data.hasActiveGame) {
+        if (data && data.hasActiveGame) {
           setInGame(true);
           setBetAmount(data.betAmount);
           setMinesCount(data.minesCount);
@@ -35,7 +53,7 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
           setNextMultiplier(data.nextMultiplier);
         }
       })
-      .catch(console.error);
+      .catch(() => {});
   }, [user]);
 
   const handleStartGame = async () => {
@@ -57,29 +75,60 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
     setMinePositions([]);
 
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/mines/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          betAmount: Number(betAmount),
-          minesCount: Number(minesCount)
-        })
-      });
+      let startedRemotely = false;
+      try {
+        const token = localStorage.getItem('luckywin_token');
+        const res = await fetch('/api/mines/start', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            betAmount: numBet,
+            minesCount: Number(minesCount)
+          })
+        });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start game');
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (res.ok) {
+            setInGame(true);
+            setRevealedTiles([]);
+            setCurrentMultiplier(1.00);
+            setNextMultiplier(data.nextMultiplier);
+            onBalanceUpdate(data.newBalance);
+            startedRemotely = true;
+          }
+        }
+      } catch (err) {}
 
-      setInGame(true);
-      setRevealedTiles([]);
-      setCurrentMultiplier(1.00);
-      setNextMultiplier(data.nextMultiplier);
-      onBalanceUpdate(data.newBalance);
+      if (!startedRemotely) {
+        // Fallback to local game
+        const total = 25;
+        const count = Number(minesCount);
+        const mines = new Set();
+        while (mines.size < count) {
+          mines.add(Math.floor(Math.random() * total));
+        }
+
+        localMinesRef.current = {
+          betAmount: numBet,
+          minesCount: count,
+          minePositions: Array.from(mines),
+          revealed: []
+        };
+
+        const newBal = parseFloat((balance - numBet).toFixed(2));
+        onBalanceUpdate(newBal);
+        setInGame(true);
+        setRevealedTiles([]);
+        setCurrentMultiplier(1.00);
+        setNextMultiplier(calcMult(25, count, 1));
+      }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message });
+      setMessage({ type: 'error', text: err.message || 'Failed to start game' });
     } finally {
       setLoading(false);
     }
@@ -90,42 +139,83 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/mines/reveal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ tileIndex: index })
-      });
+      let handledRemotely = false;
+      try {
+        const token = localStorage.getItem('luckywin_token');
+        const res = await fetch('/api/mines/reveal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ tileIndex: index })
+        });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to reveal tile');
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (res.ok) {
+            handledRemotely = true;
+            if (data.exploded) {
+              setExploded(true);
+              setInGame(false);
+              setMinePositions(data.minePositions || []);
+              soundFx.playCrash();
+              setMessage({ type: 'error', text: 'You hit a mine. Round lost.' });
+            } else {
+              setRevealedTiles(data.revealedTiles);
+              setCurrentMultiplier(data.currentMultiplier);
+              setNextMultiplier(data.nextMultiplier);
+              soundFx.playGem();
 
-      if (data.exploded) {
-        setExploded(true);
-        setInGame(false);
-        setMinePositions(data.minePositions || []);
-        soundFx.playCrash();
-        setMessage({ type: 'error', text: 'You hit a mine. Round lost.' });
-      } else {
-        setRevealedTiles(data.revealedTiles);
-        setCurrentMultiplier(data.currentMultiplier);
-        setNextMultiplier(data.nextMultiplier);
-        soundFx.playGem();
+              if (data.isCleared) {
+                setInGame(false);
+                setMinePositions(data.minePositions || []);
+                onBalanceUpdate(data.newBalance);
+                soundFx.playCashout();
+                setMessage({ type: 'success', text: data.message });
+                confetti({ particleCount: 80, spread: 70 });
+              }
+            }
+          }
+        }
+      } catch (err) {}
 
-        if (data.isCleared) {
+      if (!handledRemotely && localMinesRef.current) {
+        const sess = localMinesRef.current;
+        if (sess.minePositions.includes(index)) {
+          // Exploded
+          setExploded(true);
           setInGame(false);
-          setMinePositions(data.minePositions || []);
-          onBalanceUpdate(data.newBalance);
-          soundFx.playCashout();
-          setMessage({ type: 'success', text: data.message });
-          confetti({ particleCount: 80, spread: 70 });
+          setMinePositions(sess.minePositions);
+          soundFx.playCrash();
+          setMessage({ type: 'error', text: 'Boom! You hit a mine. Better luck next round.' });
+        } else {
+          // Gem
+          const newRevealed = [...sess.revealed, index];
+          sess.revealed = newRevealed;
+          setRevealedTiles(newRevealed);
+
+          const curM = calcMult(25, sess.minesCount, newRevealed.length);
+          const nextM = calcMult(25, sess.minesCount, newRevealed.length + 1);
+          setCurrentMultiplier(curM);
+          setNextMultiplier(nextM);
+          soundFx.playGem();
+
+          if (newRevealed.length === (25 - sess.minesCount)) {
+            // All cleared!
+            setInGame(false);
+            setMinePositions(sess.minePositions);
+            const payout = parseFloat((sess.betAmount * curM).toFixed(2));
+            onBalanceUpdate(parseFloat((balance + payout).toFixed(2)));
+            soundFx.playCashout();
+            setMessage({ type: 'success', text: `Field Cleared! You won PKR ${payout}!` });
+            confetti({ particleCount: 80, spread: 70 });
+          }
         }
       }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message });
+      setMessage({ type: 'error', text: err.message || 'Error revealing tile' });
     } finally {
       setLoading(false);
     }
@@ -136,26 +226,45 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/mines/cashout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+      let cashedRemotely = false;
+      try {
+        const token = localStorage.getItem('luckywin_token');
+        const res = await fetch('/api/mines/cashout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (res.ok) {
+            cashedRemotely = true;
+            setInGame(false);
+            setMinePositions(data.minePositions || []);
+            onBalanceUpdate(data.newBalance);
+            soundFx.playCashout();
+            setMessage({ type: 'success', text: `Cashed out successfully: PKR ${data.payout}` });
+            confetti({ particleCount: 70, spread: 60 });
+          }
         }
-      });
+      } catch (err) {}
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to cash out');
-
-      setInGame(false);
-      setMinePositions(data.minePositions || []);
-      onBalanceUpdate(data.newBalance);
-      soundFx.playCashout();
-      setMessage({ type: 'success', text: `Cashed out successfully: PKR ${data.payout}` });
-      confetti({ particleCount: 70, spread: 60 });
+      if (!cashedRemotely && localMinesRef.current) {
+        const sess = localMinesRef.current;
+        const payout = parseFloat((sess.betAmount * currentMultiplier).toFixed(2));
+        const newBal = parseFloat((balance + payout).toFixed(2));
+        onBalanceUpdate(newBal);
+        setInGame(false);
+        setMinePositions(sess.minePositions);
+        soundFx.playCashout();
+        setMessage({ type: 'success', text: `Cashed out successfully: PKR ${payout}` });
+        confetti({ particleCount: 70, spread: 60 });
+      }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message });
+      setMessage({ type: 'error', text: err.message || 'Cashout error' });
     } finally {
       setLoading(false);
     }

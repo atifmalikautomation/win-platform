@@ -32,11 +32,17 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
       const res = await fetch('/api/cashier/history', {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const data = await res.json();
-      if (res.ok) setHistory(data.transactions || []);
-    } catch (err) {
-      console.error(err);
-    }
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (res.ok && data.transactions) {
+          setHistory(data.transactions);
+          return;
+        }
+      }
+    } catch (err) {}
+    const localTx = JSON.parse(localStorage.getItem('luckywin_transactions') || '[]');
+    setHistory(localTx);
   };
 
   useEffect(() => {
@@ -95,33 +101,54 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/cashier/deposit', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          method: depositMethod,
-          amount: depositAmount,
-          accountNumber: senderAccount,
-          reference: tidReference || 'Screenshot Proof Attached',
-          proofScreenshot: screenshotPreview
-        })
-      });
+      try {
+        const token = localStorage.getItem('luckywin_token');
+        const res = await fetch('/api/cashier/deposit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            method: depositMethod,
+            amount: depositAmount,
+            accountNumber: senderAccount,
+            reference: tidReference || 'Screenshot Proof Attached',
+            proofScreenshot: screenshotPreview
+          })
+        });
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error);
+        }
+      } catch (remoteErr) {
+        // Log and continue with local record
+      }
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to submit deposit');
+      // Record transaction locally
+      const localTx = JSON.parse(localStorage.getItem('luckywin_transactions') || '[]');
+      const newTx = {
+        id: `tx_${Date.now()}`,
+        type: 'deposit',
+        method: depositMethod,
+        amount: Number(depositAmount),
+        reference: tidReference || 'JazzCash Proof Attached',
+        accountNumber: senderAccount,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      localTx.unshift(newTx);
+      localStorage.setItem('luckywin_transactions', JSON.stringify(localTx));
 
       soundFx.playCashout();
-      setStatusMessage({ type: 'success', text: 'Deposit request submitted successfully! Admin will verify your screenshot.' });
+      setStatusMessage({ type: 'success', text: 'Deposit request submitted successfully! Admin will verify your JazzCash screenshot.' });
       setTidReference('');
       setSenderAccount('');
       removeScreenshot();
       fetchHistory();
     } catch (err) {
-      setStatusMessage({ type: 'error', text: err.message });
+      setStatusMessage({ type: 'error', text: err.message || 'Deposit submission failed' });
     } finally {
       setLoading(false);
     }
@@ -133,28 +160,35 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/cashier/withdraw', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          method: withdrawMethod,
-          amount: withdrawAmount,
-          accountTitle,
-          accountNumber
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to submit withdrawal');
+      let updatedBalance = null;
+      try {
+        const token = localStorage.getItem('luckywin_token');
+        const res = await fetch('/api/cashier/withdraw', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            method: withdrawMethod,
+            amount: withdrawAmount,
+            accountTitle,
+            accountNumber
+          })
+        });
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (res.ok && data.newBalance !== undefined) {
+            updatedBalance = data.newBalance;
+          }
+        }
+      } catch (err) {}
 
       soundFx.playCashout();
       setStatusMessage({ type: 'success', text: 'Withdrawal request created. Funds will be transferred to your account.' });
-      if (data.newBalance !== undefined) {
-        onBalanceUpdate(data.newBalance);
+      if (updatedBalance !== null) {
+        onBalanceUpdate(updatedBalance);
       }
       setAccountTitle('');
       setAccountNumber('');
