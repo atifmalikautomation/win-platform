@@ -1,0 +1,15 @@
+{
+  "name": "luckywin-platform",
+  "version": "1.0.0",
+  "description": "Custom SkyWin Next-Gen Gaming Platform with Aviator X, Mines, Provably Fair, and Admin Panel",
+  "scripts": {
+    "start": "node server/index.js",
+    "server": "node server/index.js",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm install && npm run build",
+    "test": "node server/test_verify.js"
+  },
+  "keywords": ["gaming", "skywin", "aviator", "crash-game", "mines", "provably-fair"],
+  "author": "Antigravity",
+  "license": "ISC"
+}

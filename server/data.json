@@ -1,0 +1,41 @@
+{
+  "users": [
+    {
+      "id": "usr_admin",
+      "username": "admin",
+      "email": "admin@luckywin.com",
+      "passwordHash": "$2b$10$8NSVSH6DUiQw.oFkwAbmjeefxKFhPPRFm018XdRDppJoSNJ3YwCO6",
+      "role": "admin",
+      "balance": 0,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-18T00:29:18.103Z",
+      "isBanned": false
+    },
+    {
+      "id": "usr_demo",
+      "username": "LuckyPlayer",
+      "email": "player@example.com",
+      "passwordHash": "$2b$10$Whzk8jMkMaVStBl1AONWpOuftjz2u.8BS1RKXrErlLP5aWtUZXFu2",
+      "role": "user",
+      "balance": 0,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-18T00:29:18.104Z",
+      "isBanned": false
+    }
+  ],
+  "transactions": [],
+  "bets": [],
+  "gameSettings": {
+    "crashRtp": 96,
+    "houseEdge": 4,
+    "minBet": 10,
+    "maxBet": 50000,
+    "maxPayout": 1000000,
+    "maintenance": false
+  },
+  "stats": {
+    "totalWagered": 0,
+    "totalPayouts": 0,
+    "grossGamingRevenue": 0
+  }
+}

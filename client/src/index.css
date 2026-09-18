@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Montserrat', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0a0c14;
+  color: #f1f5f9;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, .font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: -0.01em;
+}
+
+/* Gaming Tabular Numbers (Bold, Solid, Beautiful Curves) */
+.font-mono, .font-mono-num {
+  font-family: var(--font-heading), var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* SkyWin Aviator Bet Buttons */
+.btn-bet-green {
+  background-color: #00c638;
+  color: #000000;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  border-radius: 12px;
+  transition: all 0.12s ease;
+  box-shadow: 0 4px 12px rgba(0, 198, 56, 0.25);
+}
+.btn-bet-green:hover:not(:disabled) {
+  background-color: #00d93e;
+  box-shadow: 0 4px 16px rgba(0, 198, 56, 0.4);
+}
+.btn-bet-green:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-cashout-gold {
+  background: linear-gradient(180deg, #ffb800 0%, #ff9500 100%);
+  color: #000000;
+  font-family: var(--font-heading);
+  font-weight: 900;
+  border-radius: 12px;
+  transition: all 0.12s ease;
+  box-shadow: 0 4px 16px rgba(255, 166, 0, 0.35);
+}
+.btn-cashout-gold:hover {
+  background: linear-gradient(180deg, #ffc420 0%, #ffa514 100%);
+  box-shadow: 0 4px 22px rgba(255, 166, 0, 0.5);
+}
+.btn-cashout-gold:active {
+  transform: scale(0.98);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #090b10;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2533;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2d364a;
+}
