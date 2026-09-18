@@ -59,74 +59,18 @@ class SoundManager {
     } catch (e) {}
   }
 
-  // 2. Jet Takeoff Whoosh / Flight Sound Loop
+  // 2. Jet Flight Sound - Silenced as per user instruction (no engine running sound)
   startFlightSound() {
-    if (this.isMuted) return;
-    this.initContext();
-    if (!this.ctx) return;
-    this.stopFlightSound();
-
-    try {
-      const now = this.ctx.currentTime;
-      // White noise buffer for thruster air rumble
-      const bufferSize = this.ctx.sampleRate * 2;
-      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        data[i] = Math.random() * 2 - 1;
-      }
-
-      const noise = this.ctx.createBufferSource();
-      noise.buffer = buffer;
-      noise.loop = true;
-
-      // Lowpass filter for deep jet engine rumble
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(250, now);
-
-      this.flightGain = this.ctx.createGain();
-      this.flightGain.gain.setValueAtTime(0.01, now);
-      this.flightGain.gain.linearRampToValueAtTime(this.volume * 0.2, now + 0.5);
-
-      noise.connect(filter);
-      filter.connect(this.flightGain);
-      this.flightGain.connect(this.ctx.destination);
-
-      noise.start(now);
-      this.flightOscillator = noise;
-      this.flightFilter = filter;
-    } catch (e) {}
+    // Intentionally silenced: only crash sound plays on crash
   }
 
-  // Update engine pitch as multiplier soars
-  updateFlightPitch(multiplier) {
-    if (this.isMuted || !this.flightFilter || !this.ctx) return;
-    try {
-      const now = this.ctx.currentTime;
-      // Filter frequency rises from 250Hz up to 1200Hz
-      const freq = Math.min(1400, 250 + (multiplier - 1.0) * 120);
-      this.flightFilter.frequency.setValueAtTime(freq, now);
-    } catch (e) {}
+  // Update engine pitch - disabled
+  updateFlightPitch() {
+    // Intentionally silenced
   }
 
   stopFlightSound() {
-    if (this.flightOscillator) {
-      try {
-        if (this.flightGain && this.ctx) {
-          this.flightGain.gain.linearRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
-        }
-        setTimeout(() => {
-          if (this.flightOscillator) {
-            this.flightOscillator.stop();
-            this.flightOscillator.disconnect();
-            this.flightOscillator = null;
-          }
-        }, 120);
-      } catch (e) {
-        this.flightOscillator = null;
-      }
-    }
+    // No-op
   }
 
   // 3. Crash Explosion

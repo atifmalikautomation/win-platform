@@ -1,14 +1,14 @@
 {
   "users": [
     {
-      "id": "usr_admin",
-      "username": "admin",
-      "email": "admin@luckywin.com",
-      "passwordHash": "$2b$10$8NSVSH6DUiQw.oFkwAbmjeefxKFhPPRFm018XdRDppJoSNJ3YwCO6",
+      "id": "usr_saqib_admin",
+      "username": "saqib_admin",
+      "email": "60secscriptdoc@gmail.com",
+      "passwordHash": "$2b$10$3rrnB8s.kxgIsyq..VyeUe3Eli1ADrZjFyjKawoS3DPvmogdvJkjK",
       "role": "admin",
-      "balance": 0,
+      "balance": 100000.0,
       "bonusBalance": 0,
-      "createdAt": "2026-09-18T00:29:18.103Z",
+      "createdAt": "2026-09-19T00:00:00.000Z",
       "isBanned": false
     },
     {
@@ -17,8 +17,8 @@
       "email": "player@example.com",
       "passwordHash": "$2b$10$Whzk8jMkMaVStBl1AONWpOuftjz2u.8BS1RKXrErlLP5aWtUZXFu2",
       "role": "user",
-      "balance": 0,
-      "bonusBalance": 0,
+      "balance": 2500.0,
+      "bonusBalance": 500.0,
       "createdAt": "2026-09-18T00:29:18.104Z",
       "isBanned": false
     }

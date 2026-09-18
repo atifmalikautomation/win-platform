@@ -73,13 +73,11 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
 
       if (data.state === 'WAITING') {
-        soundFx.stopFlightSound();
         setBet1(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
         setBet2(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
         setCrashedAt(null);
         flewAwayPos.current.isFlyingOff = false;
       } else if (data.state === 'FLYING') {
-        soundFx.startFlightSound();
         flewAwayPos.current.isFlyingOff = false;
       }
     });
@@ -100,7 +98,6 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       setGameState('FLYING');
       setMultiplier(data.multiplier);
       if (data.onlinePlayers) setOnlinePlayers(data.onlinePlayers);
-      soundFx.updateFlightPitch(data.multiplier);
     });
 
     socket.on('crash:crashed', (data) => {
@@ -363,33 +360,38 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       const startX = 50;
       const startY = height - 65;
 
-      const targetX = Math.min(width - 120, 50 + (curMult - 1.0) * 85);
+      const targetX = Math.min(width - 110, 50 + (curMult - 1.0) * 85);
       const targetY = Math.max(65, (height - 65) - Math.pow(curMult - 1.0, 0.76) * 65);
 
       if (curState === 'FLYING') {
-        planeX = targetX;
-        planeY = targetY;
-        flewAwayPos.current.x = targetX;
-        flewAwayPos.current.y = targetY;
+        // Continuous silky-smooth 60fps interpolation (eliminates 50ms socket tick lag)
+        const lerpFactor = 0.22;
+        planeX += (targetX - planeX) * lerpFactor;
+        planeY += (targetY - planeY) * lerpFactor;
+        flewAwayPos.current.x = planeX;
+        flewAwayPos.current.y = planeY;
       } else if (curState === 'CRASHED' && flewAwayPos.current.isFlyingOff) {
         // Plane accelerates forward off-screen into the distance
-        flewAwayPos.current.x += 28;
+        flewAwayPos.current.x += 26;
         flewAwayPos.current.y -= 5;
         planeX = flewAwayPos.current.x;
         planeY = flewAwayPos.current.y;
+      } else if (curState === 'WAITING' || curState === 'STARTING') {
+        planeX = startX;
+        planeY = startY;
       }
 
-      // Draw Red Trajectory Curve
-      if (curState === 'FLYING' || curState === 'CRASHED') {
+      // Draw Red Trajectory Curve matching planeX and planeY
+      if ((curState === 'FLYING' || curState === 'CRASHED') && planeX > startX) {
         // Red glow area under curve
-        const curveGrad = ctx.createLinearGradient(0, targetY, 0, height - 65);
-        curveGrad.addColorStop(0, 'rgba(230, 0, 38, 0.2)');
+        const curveGrad = ctx.createLinearGradient(0, planeY, 0, height - 65);
+        curveGrad.addColorStop(0, 'rgba(230, 0, 38, 0.22)');
         curveGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
         ctx.beginPath();
         ctx.moveTo(startX, startY);
-        ctx.quadraticCurveTo(startX + (targetX - startX) * 0.35, startY, targetX, targetY);
-        ctx.lineTo(targetX, height - 65);
+        ctx.quadraticCurveTo(startX + (planeX - startX) * 0.35, startY, planeX, planeY);
+        ctx.lineTo(planeX, height - 65);
         ctx.lineTo(startX, height - 65);
         ctx.closePath();
         ctx.fillStyle = curveGrad;
@@ -398,28 +400,30 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         // Aviator Red Solid Curve Line
         ctx.beginPath();
         ctx.moveTo(startX, startY);
-        ctx.quadraticCurveTo(startX + (targetX - startX) * 0.35, startY, targetX, targetY);
+        ctx.quadraticCurveTo(startX + (planeX - startX) * 0.35, startY, planeX, planeY);
         ctx.strokeStyle = '#e60026';
         ctx.lineWidth = 3.5;
         ctx.shadowColor = '#ff1a40';
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 8;
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // 5. Emit Wing Vortex Trails
+        // 5. Emit Wing Vortex Trails (throttled)
         if (curState === 'FLYING') {
-          wingTrails.push({
-            x: planeX - 25,
-            y: planeY + 8,
-            alpha: 0.7,
-            size: 3
-          });
+          if (Math.random() < 0.6) {
+            wingTrails.push({
+              x: planeX - 25,
+              y: planeY + 8,
+              alpha: 0.65,
+              size: 2.8
+            });
+          }
 
           // Draw condensation trails
           for (let i = wingTrails.length - 1; i >= 0; i--) {
             const t = wingTrails[i];
-            t.x -= 3.5;
-            t.alpha -= 0.03;
+            t.x -= 3.2;
+            t.alpha -= 0.035;
             t.size *= 0.96;
 
             if (t.alpha <= 0) {

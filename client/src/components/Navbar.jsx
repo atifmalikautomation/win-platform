@@ -121,13 +121,13 @@ export default function Navbar({
         </div>
 
         {/* Right: Sound, Privacy Eye, Balance Box, Deposit, User */}
-        <div className="flex items-center gap-2 sm:gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           
-          {/* Sound Toggle */}
+          {/* Sound Toggle (Hidden on small mobile to give room to deposit/register) */}
           <button
             onClick={handleToggleMute}
             title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
-            className={`p-2 rounded-xl border transition-all ${
+            className={`hidden sm:flex p-2 rounded-xl border transition-all ${
               isMuted
                 ? 'bg-[#0d1017] border-[#1c2230] text-slate-500 hover:text-slate-400'
                 : 'bg-[#1a68ff]/10 border-[#1a68ff]/30 text-[#1a68ff]'
@@ -138,16 +138,16 @@ export default function Navbar({
 
           {user ? (
             <>
-              {/* Balance Box with Privacy Eye Switcher (SkyWin Exact) */}
-              <div className="flex items-center gap-2 bg-[#0c0f17] border border-[#1a202e] rounded-xl px-3 py-1.5">
+              {/* Balance Box with Privacy Eye Switcher */}
+              <div className="flex items-center gap-1.5 bg-[#0c0f17] border border-[#1a202e] rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 shrink-0">
                 <div className="flex flex-col text-right">
-                  <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-heading leading-none">
+                  <span className="hidden sm:inline text-[9px] text-slate-400 font-bold uppercase tracking-wider font-heading leading-none">
                     PKR Balance
                   </span>
-                  <span className="text-[#00c638] font-bold text-xs sm:text-sm font-mono leading-tight mt-0.5">
+                  <span className="text-[#00c638] font-bold text-xs sm:text-sm font-mono leading-tight">
                     {hideBalance
-                      ? 'PKR ••••••'
-                      : `PKR ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      ? '••••••'
+                      : `PKR ${balance.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
                   </span>
                 </div>
 
@@ -164,38 +164,38 @@ export default function Navbar({
               {/* SkyWin Solid Green Deposit Button */}
               <button
                 onClick={() => onOpenCashier('deposit')}
-                className="btn-bet-green flex items-center gap-1 text-slate-950 font-heading font-black text-xs sm:text-sm px-3.5 py-2 shadow-sm"
+                className="btn-bet-green flex items-center gap-1 text-slate-950 font-heading font-black text-xs sm:text-sm px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl shadow-sm shrink-0 whitespace-nowrap"
               >
-                <Plus className="w-4 h-4 stroke-[3]" />
-                Deposit
+                <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                <span>Deposit</span>
               </button>
 
               {/* User Dropdown / Profile */}
-              <div className="flex items-center gap-2 pl-1.5 border-l border-[#1a202e]">
+              <div className="flex items-center gap-1.5 pl-1 border-l border-[#1a202e] shrink-0">
                 <div className="hidden sm:flex flex-col text-right">
-                  <span className="text-xs font-bold text-slate-200 leading-tight font-heading">{user.username}</span>
+                  <span className="text-xs font-bold text-slate-200 leading-tight font-heading truncate max-w-[80px]">{user.username}</span>
                   <span className="text-[9px] text-slate-500 font-mono">ID: {user.id ? user.id.slice(-5) : '001'}</span>
                 </div>
                 <button
                   onClick={onLogout}
                   title="Logout"
-                  className="p-2 rounded-xl bg-[#0c0f17] border border-[#1a202e] text-slate-400 hover:text-rose-400 transition-colors"
+                  className="p-1.5 sm:p-2 rounded-xl bg-[#0c0f17] border border-[#1a202e] text-slate-400 hover:text-rose-400 transition-colors shrink-0"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
                 onClick={() => onOpenAuth('login')}
-                className="text-slate-300 hover:text-white px-3.5 py-1.5 rounded-xl text-xs font-heading font-bold transition-colors"
+                className="text-slate-300 hover:text-white px-2 sm:px-3.5 py-1.5 rounded-xl text-xs font-heading font-bold transition-colors shrink-0 whitespace-nowrap"
               >
                 Log In
               </button>
               <button
                 onClick={() => onOpenAuth('register')}
-                className="btn-bet-green text-slate-950 font-heading font-black text-xs px-3.5 py-2 rounded-xl shadow-sm"
+                className="btn-bet-green text-slate-950 font-heading font-black text-xs px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl shadow-sm shrink-0 whitespace-nowrap"
               >
                 Registration
               </button>

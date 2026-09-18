@@ -7,15 +7,15 @@ const DB_PATH = path.join(__dirname, 'data.json');
 // Initialize database structure
 function initDB() {
   if (!fs.existsSync(DB_PATH)) {
-    const defaultAdminPassword = bcrypt.hashSync('admin123', 10);
+    const defaultAdminPassword = bcrypt.hashSync('SkyWin#Saqib2026!', 10);
     const defaultUserPassword = bcrypt.hashSync('user123', 10);
 
     const initialData = {
       users: [
         {
-          id: 'usr_admin',
-          username: 'admin',
-          email: 'admin@luckywin.com',
+          id: 'usr_saqib_admin',
+          username: 'saqib_admin',
+          email: '60secscriptdoc@gmail.com',
           passwordHash: defaultAdminPassword,
           role: 'admin',
           balance: 100000.0,

@@ -9,7 +9,8 @@ import AdminDashboard from './components/AdminDashboard';
 import AuthModal from './components/AuthModal';
 import CashierModal from './components/CashierModal';
 import ProvablyFairModal from './components/ProvablyFairModal';
-import { ShieldCheck, Lock, Flame, ChevronRight, Gamepad2 } from 'lucide-react';
+import { ShieldCheck, Lock, Flame, ChevronRight, Gamepad2, Plus, Bomb, Sliders } from 'lucide-react';
+import { soundFx } from './utils/soundEffects';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('crash'); // 'crash' | 'mines' | 'lobby' | 'admin'
@@ -107,7 +108,7 @@ export default function App() {
         />
 
         {/* Main Route Content */}
-        <main className="flex-1">
+        <main className="flex-1 pb-20 md:pb-0">
           {activeTab === 'crash' && (
             <div>
               {/* Aviator X Flight Arena */}
@@ -222,6 +223,84 @@ export default function App() {
         </footer>
 
       </div>
+
+      {/* Mobile Fixed Bottom App Bar (Always accessible on smartphone screens) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0a0d14]/95 backdrop-blur-md border-t border-[#181d2a] px-2 py-1.5 flex items-center justify-around shadow-2xl">
+        <button
+          onClick={() => { setActiveTab('crash'); soundFx.playBet(); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-heading font-bold transition-colors ${
+            activeTab === 'crash' ? 'text-[#ff1a40]' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <img src="/aviator_plane.png" alt="Aviator" className="w-5 h-4 object-contain" />
+          <span>Aviator</span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('mines'); soundFx.playBet(); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-heading font-bold transition-colors ${
+            activeTab === 'mines' ? 'text-[#00c638]' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Bomb className="w-4 h-4" />
+          <span>Mines</span>
+        </button>
+
+        {/* Center Glowing Deposit / Register Quick Action */}
+        <button
+          onClick={() => {
+            if (!user) {
+              setAuthModal({ isOpen: true, mode: 'register' });
+            } else {
+              setCashierModal({ isOpen: true, tab: 'deposit' });
+            }
+            soundFx.playBet();
+          }}
+          className="btn-bet-green -mt-3.5 px-3 py-1.5 rounded-2xl shadow-lg shadow-emerald-500/25 flex flex-col items-center justify-center text-slate-950 font-heading font-black shrink-0"
+        >
+          <Plus className="w-5 h-5 stroke-[3]" />
+          <span className="text-[9px] uppercase tracking-wider leading-none">
+            {user ? 'Deposit' : 'Register'}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('lobby'); soundFx.playBet(); }}
+          className={`flex flex-col items-center gap-0.5 text-[10px] font-heading font-bold transition-colors ${
+            activeTab === 'lobby' ? 'text-[#38bdf8]' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Gamepad2 className="w-4 h-4" />
+          <span>Lobby</span>
+        </button>
+
+        {user?.role === 'admin' ? (
+          <button
+            onClick={() => { setActiveTab('admin'); soundFx.playBet(); }}
+            className={`flex flex-col items-center gap-0.5 text-[10px] font-heading font-bold transition-colors ${
+              activeTab === 'admin' ? 'text-[#ffb800]' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Sliders className="w-4 h-4 text-[#ffb800]" />
+            <span>Admin</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              if (!user) {
+                setAuthModal({ isOpen: true, mode: 'login' });
+              } else {
+                setFairModal(true);
+              }
+              soundFx.playBet();
+            }}
+            className="flex flex-col items-center gap-0.5 text-[10px] font-heading font-bold text-slate-400 hover:text-white transition-colors"
+          >
+            <ShieldCheck className="w-4 h-4 text-[#1a68ff]" />
+            <span>{user ? 'Fair' : 'Login'}</span>
+          </button>
+        )}
+      </nav>
 
       {/* Modals */}
       <AuthModal
