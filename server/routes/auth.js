@@ -114,14 +114,9 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Please provide username/email and password' });
     }
 
-    // First search memory cache
+    // Always sync with cloud storage before checking credentials to ensure freshest user data & balance
+    if (db.syncWithCloud) await db.syncWithCloud(true);
     let user = db.findUserByIdentifier(cleanId);
-
-    // If not in current memory, sync from cloud storage
-    if (!user && db.syncWithCloud) {
-      await db.syncWithCloud();
-      user = db.findUserByIdentifier(cleanId);
-    }
 
     if (!user) {
       return res.status(400).json({ error: 'User not found' });
@@ -177,6 +172,7 @@ router.post('/login', async (req, res) => {
       currentDb.users[uIdx].authProvider = user.authProvider;
       currentDb.users[uIdx].role = effectiveRole;
       await db.writeDB(currentDb);
+      user = currentDb.users[uIdx];
     }
 
     const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });
@@ -242,7 +238,7 @@ router.post('/google', async (req, res) => {
     }
 
     // 3. Ensure freshest data from cloud database
-    if (db.syncWithCloud) await db.syncWithCloud();
+    if (db.syncWithCloud) await db.syncWithCloud(true);
 
     // 4. Check if user already exists
     let user = db.findUserByEmail(email) || db.findUserByIdentifier(email);
@@ -346,7 +342,7 @@ router.post('/google', async (req, res) => {
 
 // Current User profile & fresh balance
 router.get('/me', authenticateToken, async (req, res) => {
-  if (db.syncWithCloud) await db.syncWithCloud();
+  if (db.syncWithCloud) await db.syncWithCloud(true);
   const freshUser = db.findUserById(req.user.id) || req.user;
   res.json({
     user: {

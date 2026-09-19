@@ -13,9 +13,11 @@
       "id": "usr_demo",
       "username": "LuckyPlayer",
       "email": "player@example.com",
-      "balance": 0,
+      "balance": 2000,
       "bonusBalance": 0,
-      "role": "user"
+      "role": "user",
+      "balanceUpdatedAt": 1789807228354,
+      "version": 4
     },
     {
       "id": "usr_test_123",
@@ -53,10 +55,12 @@
       "email": "atifmalikfood@gmail.com",
       "passwordHash": "$2b$10$lQo58F5CccsZaFnqu3pzKeQUCfzGm63CgSE6jeApZwCw0hxxmnx3.",
       "role": "user",
-      "balance": 1000,
+      "balance": 950,
       "bonusBalance": 0,
       "createdAt": "2026-09-19T07:09:56.115Z",
-      "isBanned": false
+      "isBanned": false,
+      "balanceUpdatedAt": 1789807225629,
+      "version": 1
     },
     {
       "id": "usr_1789802224617_z1bsuj",
@@ -81,7 +85,33 @@
       "isBanned": false
     }
   ],
-  "bets": [],
+  "bets": [
+    {
+      "id": "crash_bet_1789807225816_nsbsgv",
+      "userId": "usr_demo",
+      "username": "LuckyPlayer",
+      "game": "aviator",
+      "amount": 100,
+      "betAmount": 100,
+      "multiplier": 2.5,
+      "payout": 250,
+      "status": "won",
+      "autoCashout": null,
+      "createdAt": "2026-09-19T08:40:25.816Z"
+    },
+    {
+      "id": "crash_bet_1789807225629_czwat9",
+      "userId": "usr_1789801795983_ul6ibh",
+      "username": "Atif Malik",
+      "game": "aviator",
+      "betAmount": 50,
+      "multiplier": 0,
+      "payout": 0,
+      "status": "lost",
+      "autoCashout": null,
+      "createdAt": "2026-09-19T08:40:25.629Z"
+    }
+  ],
   "gameSettings": {
     "crashRtp": 96,
     "houseEdge": 4,
@@ -93,13 +123,37 @@
     "forcedNextMultiplier": null,
     "crashNowTriggered": 0,
     "activeCrashRound": {
-      "roundId": 1001,
-      "startTime": 1789803652437,
-      "flightStartTime": 1789803657437,
-      "crashTime": 1789803665317,
-      "nextRoundStartTime": 1789803668817,
-      "crashedAt": 2.55,
-      "crashNowHandled": 0
+      "roundId": 1213,
+      "startTime": 1789807201843,
+      "flightStartTime": 1789807206843,
+      "crashTime": 1789807218234,
+      "nextRoundStartTime": 1789807221734,
+      "crashedAt": 3.87,
+      "crashNowHandled": 0,
+      "state": "CRASHED",
+      "multiplier": 1,
+      "countdown": 0,
+      "serverTime": 1789807168553,
+      "history": [
+        1,
+        3.94,
+        1.66,
+        1.17,
+        1.14,
+        11.09,
+        1.73,
+        1.28,
+        106.65,
+        8.11,
+        1.48,
+        10.61
+      ],
+      "onlinePlayers": 1830
     }
+  },
+  "stats": {
+    "totalWagered": 150,
+    "totalPayouts": 250,
+    "grossGamingRevenue": -100
   }
 }

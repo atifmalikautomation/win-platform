@@ -12,61 +12,19 @@ const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0b6
 
 let memoryCache = null;
 let lastCloudSync = 0;
+let lastLocalWrite = 0;
 
-// Cloud Sync Helpers with Timestamp & Version Monotonicity
-function smartMergeUserData(localDb, remoteDb) {
-  if (!remoteDb || !Array.isArray(remoteDb.users)) return localDb || readDB();
-  if (!localDb || !Array.isArray(localDb.users) || localDb.users.length === 0) return remoteDb;
-
-  const userMap = new Map();
-
-  // 1. Populate map with incoming cloud users
-  remoteDb.users.forEach(remoteU => {
-    userMap.set(remoteU.id, { ...remoteU });
-  });
-
-  // 2. Merge with local memory users (Local balance wins if updated more recently)
-  localDb.users.forEach(localU => {
-    const existing = userMap.get(localU.id);
-    if (!existing) {
-      userMap.set(localU.id, localU);
-    } else {
-      const localTS = localU.balanceUpdatedAt || 0;
-      const remoteTS = existing.balanceUpdatedAt || 0;
-      // If local user has a newer or equal balance update, keep local balance!
-      if (localTS >= remoteTS) {
-        existing.balance = localU.balance;
-        existing.bonusBalance = localU.bonusBalance !== undefined ? localU.bonusBalance : existing.bonusBalance;
-        existing.balanceUpdatedAt = localU.balanceUpdatedAt;
-        existing.version = localU.version || existing.version;
-      }
-      // Merge email if missing in remote
-      if (!existing.email && localU.email) {
-        existing.email = localU.email;
-      }
-      // Merge lastLogin if local is more recent
-      if (localU.lastLogin && (!existing.lastLogin || new Date(localU.lastLogin) > new Date(existing.lastLogin))) {
-        existing.lastLogin = localU.lastLogin;
-      }
-      if (localU.authProvider) {
-        existing.authProvider = localU.authProvider;
-      }
-      if (localU.picture && !existing.picture) {
-        existing.picture = localU.picture;
-      }
-      userMap.set(localU.id, existing);
-    }
-  });
-
-  remoteDb.users = Array.from(userMap.values());
-  return remoteDb;
-}
-
+// Cloud Sync Helpers: Vercel Private Blob is the single persistent source of truth
 async function syncWithCloud(force = false) {
   const now = Date.now();
 
-  // Throttle remote fetching to once every 10 seconds to prevent reading stale replication snapshots
-  if (!force && memoryCache && Array.isArray(memoryCache.users) && (now - lastCloudSync < 10000)) {
+  // If this process just wrote data within the last 3 seconds, local memory is newer than edge CDN propagation
+  if (memoryCache && Array.isArray(memoryCache.users) && (now - lastLocalWrite < 3000)) {
+    return memoryCache;
+  }
+
+  // If not forced and synced within the last 1500ms, use current cache
+  if (!force && memoryCache && Array.isArray(memoryCache.users) && (now - lastCloudSync < 1500)) {
     return memoryCache;
   }
 
@@ -80,7 +38,11 @@ async function syncWithCloud(force = false) {
     if (res.ok) {
       const json = await res.json();
       if (json && Array.isArray(json.users) && json.users.length > 0) {
-        memoryCache = smartMergeUserData(memoryCache, json);
+        // Guard: If a local write occurred while the fetch was in flight, do not overwrite!
+        if (now - lastLocalWrite < 3000 && memoryCache) {
+          return memoryCache;
+        }
+        memoryCache = json;
         lastCloudSync = now;
         try {
           fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
@@ -99,7 +61,7 @@ async function syncWithCloud(force = false) {
       if (res.ok) {
         const json = await res.json();
         if (json && json.data && Array.isArray(json.data.users)) {
-          memoryCache = smartMergeUserData(memoryCache, json.data);
+          memoryCache = json.data;
           lastCloudSync = now;
           try {
             fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
@@ -236,6 +198,8 @@ function readDB() {
 // Atomic write with cloud persistence
 async function writeDB(data) {
   memoryCache = data;
+  lastCloudSync = Date.now();
+  lastLocalWrite = Date.now();
   try {
     const tempPath = `${DB_PATH}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
@@ -446,6 +410,110 @@ function getTransactions(userId = null) {
   return list;
 }
 
+// Atomic Aviator Bet Placement (Single cloud sync + single cloud write, zero race conditions)
+async function placeBetTransaction({ userId, username, betAmount, autoCashout }) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) throw new Error('User not found');
+
+  const numAmount = Number(betAmount);
+  if (isNaN(numAmount) || numAmount < 10) {
+    throw new Error('Minimum bet is PKR 10');
+  }
+
+  const currentBal = Number(user.balance || 0);
+  if (currentBal < numAmount) {
+    throw new Error('Insufficient balance');
+  }
+
+  const newBalance = Math.max(0, Math.round((currentBal - numAmount) * 100) / 100);
+  user.balance = newBalance;
+  user.balanceUpdatedAt = Date.now();
+  user.version = (user.version || 0) + 1;
+
+  if (!Array.isArray(db.bets)) db.bets = [];
+  if (!db.stats) db.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
+
+  const betRecord = {
+    id: `crash_bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+    userId: user.id,
+    username: user.username,
+    game: 'aviator',
+    amount: numAmount,
+    betAmount: numAmount,
+    multiplier: 0,
+    payout: 0,
+    status: 'lost',
+    autoCashout: autoCashout ? Number(autoCashout) : null,
+    createdAt: new Date().toISOString()
+  };
+
+  db.bets.unshift(betRecord);
+  if (db.bets.length > 500) db.bets.pop();
+
+  db.stats.totalWagered = Math.round(((db.stats.totalWagered || 0) + numAmount) * 100) / 100;
+  db.stats.grossGamingRevenue = Math.round((db.stats.totalWagered - (db.stats.totalPayouts || 0)) * 100) / 100;
+
+  await writeDB(db);
+  return { success: true, bet: betRecord, newBalance };
+}
+
+// Atomic Aviator Bet Cashout (Exact payout calculation, single cloud write)
+async function cashoutBetTransaction({ userId, username, betId, betAmount, multiplier }) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) throw new Error('User not found');
+
+  const numAmount = Number(betAmount);
+  const numMultiplier = Number(multiplier);
+  if (isNaN(numAmount) || numAmount <= 0) throw new Error('Invalid bet amount');
+  if (isNaN(numMultiplier) || numMultiplier < 1.01) throw new Error('Valid multiplier >= 1.01 required');
+
+  const payout = Math.round(numAmount * numMultiplier * 100) / 100;
+  const currentBal = Number(user.balance || 0);
+  const newBalance = Math.round((currentBal + payout) * 100) / 100;
+  user.balance = newBalance;
+  user.balanceUpdatedAt = Date.now();
+  user.version = (user.version || 0) + 1;
+
+  if (!Array.isArray(db.bets)) db.bets = [];
+  if (!db.stats) db.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
+
+  // Find and update existing bet record
+  let betRecord = db.bets.find(b => b.id === betId);
+  if (!betRecord && userId) {
+    betRecord = db.bets.find(b => b.userId === userId && b.status === 'lost' && Math.abs(b.betAmount - numAmount) < 0.01);
+  }
+
+  if (betRecord) {
+    betRecord.multiplier = numMultiplier;
+    betRecord.payout = payout;
+    betRecord.status = 'won';
+  } else {
+    betRecord = {
+      id: betId || `crash_bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      userId: user.id,
+      username: user.username,
+      game: 'aviator',
+      betAmount: numAmount,
+      multiplier: numMultiplier,
+      payout,
+      status: 'won',
+      createdAt: new Date().toISOString()
+    };
+    db.bets.unshift(betRecord);
+    if (db.bets.length > 500) db.bets.pop();
+  }
+
+  db.stats.totalPayouts = Math.round(((db.stats.totalPayouts || 0) + payout) * 100) / 100;
+  db.stats.grossGamingRevenue = Math.round(((db.stats.totalWagered || 0) - db.stats.totalPayouts) * 100) / 100;
+
+  await writeDB(db);
+  return { success: true, payout, multiplier: numMultiplier, newBalance };
+}
+
 // Bets & Stats
 async function recordBet({ userId, username, game, betAmount, multiplier, payout, status }) {
   const db = readDB();
@@ -554,6 +622,8 @@ module.exports = {
   processTransaction,
   getTransactions,
   recordBet,
+  placeBetTransaction,
+  cashoutBetTransaction,
   getRecentBets,
   getGameSettings,
   updateGameSettings,

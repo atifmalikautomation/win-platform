@@ -68,21 +68,10 @@ export default function App() {
         })
         .then(data => {
           if (data && data.user) {
-            const savedStr = localStorage.getItem('luckywin_active_user');
-            let effectiveBalance = data.user.balance;
-            let effectiveUpdatedAt = data.user.balanceUpdatedAt || 0;
-            if (savedStr) {
-              try {
-                const saved = JSON.parse(savedStr);
-                if (saved.balanceUpdatedAt && saved.balanceUpdatedAt > effectiveUpdatedAt) {
-                  effectiveBalance = saved.balance;
-                  effectiveUpdatedAt = saved.balanceUpdatedAt;
-                }
-              } catch (e) {}
-            }
-            const updatedUser = { ...data.user, balance: effectiveBalance, balanceUpdatedAt: effectiveUpdatedAt };
+            const authoritativeBal = Number(data.user.balance !== undefined ? data.user.balance : 0);
+            const updatedUser = { ...data.user, balance: authoritativeBal };
             setUser(updatedUser);
-            setBalance(effectiveBalance);
+            setBalance(authoritativeBal);
             localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
           }
         })
@@ -96,7 +85,7 @@ export default function App() {
     };
   }, []);
 
-  // Real-time Cloud Balance Sync (Polls every 2.5s and listens to cross-tab storage changes)
+  // Real-time Cloud Balance Sync (Polls every 1.2s and listens to cross-tab storage changes)
   useEffect(() => {
     let isMounted = true;
 
@@ -111,12 +100,11 @@ export default function App() {
         if (!res.ok) return;
         const data = await res.json();
         if (data?.user && isMounted) {
-          const remoteBal = Number(data.user.balance);
-          const remoteTS = Number(data.user.balanceUpdatedAt || 0);
+          const remoteBal = Number(data.user.balance !== undefined ? data.user.balance : 0);
 
           setBalance(prevBal => {
             if (remoteBal !== prevBal) {
-              const updatedUser = { ...data.user, balance: remoteBal, balanceUpdatedAt: remoteTS };
+              const updatedUser = { ...data.user, balance: remoteBal };
               setUser(updatedUser);
               localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
               return remoteBal;
@@ -127,7 +115,7 @@ export default function App() {
       } catch (e) {}
     };
 
-    const interval = setInterval(syncBalanceFromCloud, 2500);
+    const interval = setInterval(syncBalanceFromCloud, 1200);
 
     const handleStorageChange = (e) => {
       if (e.key === 'luckywin_active_user' && e.newValue) {

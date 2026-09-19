@@ -209,50 +209,23 @@ router.post('/bet', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Minimum bet is PKR 10' });
     }
 
-    if (db.syncWithCloud) await db.syncWithCloud(true);
-    let user = db.findUserById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    if (user.balance < numAmount) {
-      return res.status(400).json({ error: 'Insufficient balance' });
-    }
-
-    // Atomically deduct balance
-    const newBalance = await db.updateUserBalance(user.id, -numAmount);
-
-    const betId = `crash_bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    const betRecord = {
-      id: betId,
-      userId: user.id,
-      username: user.username,
-      amount: numAmount,
-      autoCashout: autoCashout ? Number(autoCashout) : null,
-      cashedOut: false,
-      createdAt: Date.now()
-    };
-
-    activeCrashBets.set(betId, betRecord);
-
-    // Initial record in DB
-    await db.recordBet({
-      userId: user.id,
-      username: user.username,
-      game: 'aviator',
+    const result = await db.placeBetTransaction({
+      userId: req.user.id,
+      username: req.user.username,
       betAmount: numAmount,
-      multiplier: 0,
-      payout: 0,
-      status: 'lost'
+      autoCashout
     });
+
+    activeCrashBets.set(result.bet.id, result.bet);
 
     res.json({
       success: true,
-      bet: betRecord,
-      newBalance
+      bet: result.bet,
+      newBalance: result.newBalance
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = (err.message === 'Insufficient balance' || err.message === 'Minimum bet is PKR 10') ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 
@@ -266,44 +239,36 @@ router.post('/cashout', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Valid multiplier >= 1.01 required' });
     }
 
-    const bet = activeCrashBets.get(betId);
-    const betAmount = bet ? bet.amount : Number(amount);
+    const cachedBet = activeCrashBets.get(betId);
+    const betAmount = (cachedBet && (cachedBet.amount || cachedBet.betAmount)) || Number(amount);
 
     if (!betAmount || isNaN(betAmount) || betAmount <= 0) {
       return res.status(400).json({ error: 'Bet not found or invalid amount' });
     }
 
-    if (bet && bet.cashedOut) {
+    if (cachedBet && cachedBet.cashedOut) {
       return res.status(400).json({ error: 'Bet already cashed out' });
     }
 
-    const payout = parseFloat((betAmount * numMultiplier).toFixed(2));
-
-    // Atomically credit balance
-    const newBalance = await db.updateUserBalance(req.user.id, payout);
-
-    if (bet) {
-      bet.cashedOut = true;
-      bet.cashoutMultiplier = numMultiplier;
-      bet.payout = payout;
-    }
-
-    // Record won bet
-    await db.recordBet({
+    const result = await db.cashoutBetTransaction({
       userId: req.user.id,
       username: req.user.username,
-      game: 'aviator',
-      betAmount: betAmount,
-      multiplier: numMultiplier,
-      payout,
-      status: 'won'
+      betId,
+      betAmount,
+      multiplier: numMultiplier
     });
+
+    if (cachedBet) {
+      cachedBet.cashedOut = true;
+      cachedBet.cashoutMultiplier = numMultiplier;
+      cachedBet.payout = result.payout;
+    }
 
     res.json({
       success: true,
-      payout,
-      multiplier: numMultiplier,
-      newBalance
+      payout: result.payout,
+      multiplier: result.multiplier,
+      newBalance: result.newBalance
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
