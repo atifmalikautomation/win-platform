@@ -15,13 +15,15 @@ let lastCloudSync = 0;
 
 // Cloud Sync Helpers
 async function syncWithCloud() {
-  // 1. Primary: Official Vercel Private Blob Storage
+  // 1. Primary: Official Vercel Private Blob Storage (cache-busted real-time fetch)
   try {
-    const { get } = require('@vercel/blob');
-    const res = await get(BLOB_FILE_NAME, { access: 'private', token: BLOB_TOKEN });
-    if (res && res.stream) {
-      const text = await new Response(res.stream).text();
-      const json = JSON.parse(text);
+    const cacheBusterUrl = `https://qhxj3ttyzwbzkgca.private.blob.vercel-storage.com/${BLOB_FILE_NAME}?t=${Date.now()}`;
+    const res = await fetch(cacheBusterUrl, {
+      headers: { Authorization: `Bearer ${BLOB_TOKEN}` },
+      cache: 'no-store'
+    });
+    if (res.ok) {
+      const json = await res.json();
       if (json && Array.isArray(json.users) && json.users.length > 0) {
         // Merge with existing in-memory users so we never lose a newly created user
         if (memoryCache && Array.isArray(memoryCache.users)) {
@@ -45,7 +47,7 @@ async function syncWithCloud() {
       }
     }
   } catch (err) {
-    console.warn('Vercel Blob sync attempt:', err.message);
+    console.warn('Vercel Blob cache-busted sync attempt:', err.message);
   }
 
   // 2. Secondary redundant cloud backup
