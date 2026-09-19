@@ -35,6 +35,28 @@
       "bonusBalance": 0,
       "createdAt": "2026-09-18T22:18:28.490Z",
       "isBanned": false
+    },
+    {
+      "id": "usr_1789801745249_ts3zag",
+      "username": "pak_winner_657",
+      "email": "pak.winner.358@gmail.com",
+      "passwordHash": "$2b$10$.kGigifMhB9HPFle3YgmXuPwU/W6zYZr.oJuqmYtBXApuw6BQgT5y",
+      "role": "user",
+      "balance": 0,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-19T07:09:05.417Z",
+      "isBanned": false
+    },
+    {
+      "id": "usr_1789801795983_ul6ibh",
+      "username": "Atif Malik",
+      "email": "atifmalikfood@gmail.com",
+      "passwordHash": "$2b$10$lQo58F5CccsZaFnqu3pzKeQUCfzGm63CgSE6jeApZwCw0hxxmnx3.",
+      "role": "user",
+      "balance": 1000,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-19T07:09:56.115Z",
+      "isBanned": false
     }
   ]
 }

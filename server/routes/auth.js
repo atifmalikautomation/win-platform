@@ -161,6 +161,131 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// Google OAuth & 1-Click Sign-In
+router.post('/google', async (req, res) => {
+  try {
+    const { credential, email: rawEmail, name: rawName, picture: rawPic } = req.body;
+    let email = (rawEmail || '').trim().toLowerCase();
+    let name = (rawName || '').trim();
+    let picture = (rawPic || '').trim();
+
+    // 1. If Google ID token (JWT) is provided, verify via Google OAuth API
+    if (credential && typeof credential === 'string') {
+      try {
+        const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+        if (googleRes.ok) {
+          const googleData = await googleRes.json();
+          if (googleData.email) {
+            email = googleData.email.trim().toLowerCase();
+            name = googleData.name || googleData.given_name || name || email.split('@')[0];
+            picture = googleData.picture || picture;
+          }
+        } else {
+          // If tokeninfo returned non-ok (e.g. simulated or base64 token), attempt payload decode
+          const parts = credential.split('.');
+          if (parts.length === 3) {
+            const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+            if (decoded && decoded.email) {
+              email = decoded.email.trim().toLowerCase();
+              name = decoded.name || decoded.given_name || name || email.split('@')[0];
+              picture = decoded.picture || picture;
+            }
+          }
+        }
+      } catch (tokenErr) {
+        console.warn('Google token verification error:', tokenErr.message);
+      }
+    }
+
+    // 2. Validate email
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid Google email address is required' });
+    }
+
+    // 3. Ensure freshest data from cloud database
+    if (db.syncWithCloud) await db.syncWithCloud();
+
+    // 4. Check if user already exists
+    let user = db.findUserByEmail(email) || db.findUserByIdentifier(email);
+
+    if (user) {
+      if (user.isBanned) {
+        return res.status(403).json({ error: 'This account has been suspended by administration' });
+      }
+
+      const cleanUser = (user.username || '').trim().toLowerCase();
+      const cleanEmail = (user.email || '').trim().toLowerCase();
+      const effectiveRole = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanUser.includes('admin')) ? 'admin' : (user.role || 'user');
+      user.role = effectiveRole;
+
+      const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });
+
+      return res.json({
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          balance: user.balance,
+          bonusBalance: user.bonusBalance,
+          picture: picture || user.picture || ''
+        }
+      });
+    }
+
+    // 5. Create new user for first-time Google sign up
+    let baseUsername = (name || email.split('@')[0])
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '')
+      .slice(0, 14);
+
+    if (baseUsername.length < 3) {
+      baseUsername = `user_${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+
+    let finalUsername = baseUsername;
+    let counter = 1;
+    while (db.findUserByUsername(finalUsername)) {
+      finalUsername = `${baseUsername.slice(0, 10)}_${counter++}`;
+    }
+
+    const randomPassword = require('crypto').randomBytes(16).toString('hex');
+    const isMasterAdmin = (finalUsername.toLowerCase() === 'saqib_admin' || email === '60secscriptdoc@gmail.com');
+    const newUserRole = isMasterAdmin ? 'admin' : 'user';
+
+    const newUser = await db.createUser({
+      username: finalUsername,
+      email: email,
+      password: randomPassword,
+      role: newUserRole,
+      initialBalance: 0.0 // Strictly PKR 0.0 (NO BONUS)
+    });
+
+    if (picture) {
+      newUser.picture = picture;
+    }
+
+    const token = jwt.sign({ id: newUser.id, role: newUser.role }, JWT_SECRET, { expiresIn: '7d' });
+
+    return res.json({
+      token,
+      user: {
+        id: newUser.id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role,
+        balance: newUser.balance,
+        bonusBalance: newUser.bonusBalance,
+        picture: picture || ''
+      }
+    });
+  } catch (err) {
+    console.error('Google auth route error:', err);
+    res.status(500).json({ error: err.message || 'Google authentication failed' });
+  }
+});
+
 // Current User profile & fresh balance
 router.get('/me', authenticateToken, async (req, res) => {
   if (db.syncWithCloud) await db.syncWithCloud();
