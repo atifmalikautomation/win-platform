@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Copy, Check, AlertCircle, CheckCircle2, Lock, UploadCloud, Trash2, MessageCircle } from 'lucide-react';
+import { X, Copy, Check, AlertCircle, CheckCircle2, Lock, UploadCloud, Trash2 } from 'lucide-react';
 import { EasyPaisaIcon } from './PaymentIcons';
 import { soundFx } from '../utils/soundEffects';
 
@@ -407,17 +407,6 @@ export default function CashierModal({ isOpen, onClose, initialTab = 'deposit', 
                     {copied ? <Check className="w-4 h-4 text-[#00c638]" /> : <Copy className="w-4 h-4" />}
                   </button>
                 </div>
-
-                {/* Direct WhatsApp Support Button */}
-                <a
-                  href="https://wa.me/923004968550?text=Assalam-o-Alaikum%20SkyWin%20Cashier,%20I%20want%20to%20deposit/withdraw"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-400 text-xs font-bold font-heading transition-all shadow-sm"
-                >
-                  <MessageCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Cashier WhatsApp Support (+92 300 4968550)</span>
-                </a>
               </div>
             )}
 

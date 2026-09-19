@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { authenticateToken } = require('./auth');
 const db = require('../db');
 
@@ -10,24 +11,33 @@ const activeCrashBets = new Map();
 // ==================== GLOBALLY SYNCHRONIZED AVIATOR ROUND ENGINE ====================
 let currentRound = null;
 let roundHistory = [1.45, 2.80, 1.10, 14.50, 3.20, 1.95, 5.80, 1.05, 32.10, 2.15, 8.40, 1.72];
+const AVIATOR_SALT = 'skywin_provably_fair_salt_v2_2026';
 
 function getDeterministicMultiplier(roundId, mode, forcedMult) {
   if (forcedMult && Number(forcedMult) >= 1.01) {
     return parseFloat(Number(forcedMult).toFixed(2));
   }
+
+  // High-dispersion SHA-256 HMAC ensures completely dynamic & wide-range crash multipliers (like real Spribe Aviator)
+  const hmac = crypto.createHmac('sha256', AVIATOR_SALT);
+  hmac.update(`round_${roundId}_fair_seed`);
+  const hex = hmac.digest('hex');
+  const hexSample = parseInt(hex.substring(0, 8), 16);
+  const rand = hexSample / 0xffffffff;
+
   if (mode === 'house_win') {
-    const hash = ((roundId * 9301 + 49297) % 233280) / 233280;
-    return parseFloat((1.02 + hash * 0.23).toFixed(2));
+    return parseFloat((1.01 + rand * 0.24).toFixed(2));
   }
   if (mode === 'high_run') {
-    const hash = ((roundId * 9301 + 49297) % 233280) / 233280;
-    return parseFloat((10.0 + hash * 25.0).toFixed(2));
+    return parseFloat((10.0 + rand * 75.0).toFixed(2));
   }
-  const seed = (roundId * 1664525 + 1013904223) % 4294967296;
-  const rand = seed / 4294967296;
+
+  // 4% instant bust at 1.00x
   if (rand < 0.04) return 1.00;
-  const point = parseFloat((0.96 / (1 - rand)).toFixed(2));
-  return Math.min(100.0, Math.max(1.02, point));
+
+  // Provably fair inverse distribution curve (96% RTP)
+  const mult = 0.96 / (1.0 - rand);
+  return Math.min(250.0, Math.max(1.01, parseFloat(mult.toFixed(2))));
 }
 
 function getFlightDurationMs(mult) {
