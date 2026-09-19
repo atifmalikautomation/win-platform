@@ -14,10 +14,10 @@ router.get('/config', (req, res) => {
       exchangeRatePkrPerUsdt: 280.0
     },
     local: {
-      jazzcash: {
-        accountTitle: 'Muhammad Imtiaz',
-        accountNumber: '03005641699',
-        instructions: 'Send via JazzCash mobile app and submit the TID reference number'
+      easypaisa: {
+        accountTitle: 'Farzana Kausar',
+        accountNumber: '03004968550',
+        instructions: 'Send via Easypaisa mobile app and submit the TID reference number'
       },
       bank: {
         bankName: 'Meezan Bank Ltd',

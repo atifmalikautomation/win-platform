@@ -81,5 +81,25 @@
       "isBanned": false
     }
   ],
-  "bets": []
+  "bets": [],
+  "gameSettings": {
+    "crashRtp": 96,
+    "houseEdge": 4,
+    "minBet": 10,
+    "maxBet": 50000,
+    "maxPayout": 1000000,
+    "maintenance": false,
+    "aviatorMode": "fair",
+    "forcedNextMultiplier": null,
+    "crashNowTriggered": 0,
+    "activeCrashRound": {
+      "roundId": 1001,
+      "startTime": 1789803652437,
+      "flightStartTime": 1789803657437,
+      "crashTime": 1789803665317,
+      "nextRoundStartTime": 1789803668817,
+      "crashedAt": 2.55,
+      "crashNowHandled": 0
+    }
+  }
 }

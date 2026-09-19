@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticateToken } = require('./auth');
 const db = require('../db');
 const { getActiveMinesSessions, setMinesRigging } = require('./mines');
+const { getOrUpdateLiveRound } = require('./crash');
 
 const router = express.Router();
 
@@ -188,12 +189,13 @@ router.get('/game-control/aviator', authenticateToken, requireAdmin, async (req,
   // Serverless fallback from cloud DB settings
   if (db.syncWithCloud) await db.syncWithCloud();
   const settings = db.getGameSettings();
+  const live = getOrUpdateLiveRound();
   const recentBets = db.getRecentBets(10);
   res.json({
-    state: 'FLYING',
-    currentMultiplier: 1.00,
-    crashedAt: null,
-    countdown: 5.0,
+    state: live.state,
+    currentMultiplier: live.multiplier,
+    crashedAt: live.state === 'CRASHED' ? live.crashedAt : null,
+    countdown: live.countdown,
     forcedCrashMultiplier: settings.forcedNextMultiplier || null,
     riggingMode: settings.aviatorMode || 'fair',
     totalBets: 25 + recentBets.length,
@@ -205,7 +207,7 @@ router.get('/game-control/aviator', authenticateToken, requireAdmin, async (req,
       cashedOut: b.status === 'won',
       cashoutMultiplier: b.multiplier
     })),
-    history: [1.45, 2.80, 1.10, 14.50, 3.20, 1.95, 5.80, 1.05, 32.10, 2.15, 8.40, 1.72]
+    history: live.history || [1.45, 2.80, 1.10, 14.50, 3.20, 1.95, 5.80, 1.05, 32.10, 2.15, 8.40, 1.72]
   });
 });
 

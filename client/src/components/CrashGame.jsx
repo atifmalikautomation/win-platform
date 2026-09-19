@@ -223,67 +223,23 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     };
   }, [socket, user, onBalanceUpdate]);
 
-  // Offline/Standalone Crash Game Loop when Socket is not connected
+  // ==================== GLOBALLY SYNCHRONIZED AVIATOR ENGINE ====================
+  // Keeps all players, browsers, devices, and admin 100% in lockstep with the server clock
+  const serverTimeOffsetRef = useRef(0);
+  const liveRoundRef = useRef(null);
+
   useEffect(() => {
     if (socket) return;
 
-    let timer = null;
-    let localRoundCrash = 2.0;
-    let liveForcedMultiplier = null;
-    let liveAviatorMode = 'fair';
-    let lastCrashNowSignal = 0;
+    let isMounted = true;
+    let pollInterval = null;
+    let tickInterval = null;
 
     const botNames = [
       'Shahid_99', 'AlexPro', 'CryptoKing', 'Zeeshan77', 'Vikram_G', 'Dragon_X',
       'Hamza_92', 'Sultan786', 'JackpotHunter', 'AliRaza', 'NeonRider', 'WinnerBro',
       'Farhan_K', 'SpeedDemon', 'Tariq_77', 'Elena_V', 'BabarFan', 'Omega_Bet'
     ];
-
-    const fetchLiveGameControl = async () => {
-      try {
-        const res = await fetch('/api/crash/control');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.forcedNextMultiplier) {
-            liveForcedMultiplier = Number(data.forcedNextMultiplier);
-          }
-          if (data.aviatorMode) {
-            liveAviatorMode = data.aviatorMode;
-          }
-          if (data.crashNowTriggered && data.crashNowTriggered > lastCrashNowSignal) {
-            lastCrashNowSignal = data.crashNowTriggered;
-            if (gameStateRef.current === 'FLYING' && flyIntervalRef.current) {
-              clearInterval(flyIntervalRef.current);
-              handleLocalCrash(smoothMultiplierRef.current || 1.01);
-            }
-          }
-        }
-      } catch (e) {}
-    };
-
-    const generateRandomCrash = () => {
-      // 1. Check if admin forced multiplier for this round
-      if (liveForcedMultiplier !== null && liveForcedMultiplier >= 1.01) {
-        const forced = liveForcedMultiplier;
-        liveForcedMultiplier = null;
-        fetch('/api/crash/consume-forced', { method: 'POST' }).catch(() => {});
-        return forced;
-      }
-
-      // 2. Check admin rigging mode
-      if (liveAviatorMode === 'house_win') {
-        return parseFloat((1.02 + Math.random() * 0.23).toFixed(2)); // 1.02x - 1.25x
-      }
-      if (liveAviatorMode === 'high_run') {
-        return parseFloat((10.0 + Math.random() * 25.0).toFixed(2)); // 10.00x - 35.00x
-      }
-
-      // 3. Standard provably fair distribution
-      const rand = Math.random();
-      if (rand < 0.04) return 1.00;
-      const point = parseFloat((0.96 / (1 - rand)).toFixed(2));
-      return Math.min(100.0, Math.max(1.02, point));
-    };
 
     const generateBotBets = () => {
       const count = Math.floor(Math.random() * 8) + 6;
@@ -303,82 +259,103 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       return list;
     };
 
-    const startWaitingPhase = () => {
-      setGameState('WAITING');
-      gameStateRef.current = 'WAITING';
-      smoothMultiplierRef.current = 1.00;
-      targetMultiplierRef.current = 1.00;
-      setMultiplier(1.00);
-      setCrashedAt(null);
-      flewAwayPos.current.isFlyingOff = false;
+    const pollLiveRound = async () => {
+      try {
+        const res = await fetch('/api/crash/live', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!isMounted || !data || !data.serverTime) return;
 
-      // Only reset bets for the fresh round (clear cashed-out status)
-      setBet1(prev => ({
-        ...prev,
-        placedBet: null,
-        hasCashedOut: false,
-        cashoutPayout: 0,
-        cashoutMultiplier: 0
-      }));
-      setBet2(prev => ({
-        ...prev,
-        placedBet: null,
-        hasCashedOut: false,
-        cashoutPayout: 0,
-        cashoutMultiplier: 0
-      }));
-      setBets(generateBotBets());
+        // Synchronize local clock to server timestamp
+        serverTimeOffsetRef.current = data.serverTime - Date.now();
+        liveRoundRef.current = data;
 
-      // Query admin controls
-      fetchLiveGameControl();
+        if (data.history && Array.isArray(data.history)) {
+          setHistory(data.history);
+        }
+        if (data.onlinePlayers) {
+          setOnlinePlayers(data.onlinePlayers);
+        }
+      } catch (e) {}
+    };
 
-      let count = 5.0;
-      setCountdown(count);
+    // Initial sync and regular polling every 1200ms
+    pollLiveRound();
+    pollInterval = setInterval(pollLiveRound, 1200);
 
-      const waitInterval = setInterval(() => {
-        count = Math.max(0, parseFloat((count - 0.5).toFixed(1)));
-        setCountdown(count);
-        if (count <= 3 && count > 0 && Math.floor(count) === count) {
+    // Fast 50ms engine tick for buttery smooth, synchronous multiplier advancement
+    tickInterval = setInterval(() => {
+      const round = liveRoundRef.current;
+      if (!round) return;
+
+      const now = Date.now() + serverTimeOffsetRef.current;
+
+      if (now < round.flightStartTime) {
+        // ========== 1. WAITING COUNTDOWN PHASE ==========
+        if (gameStateRef.current !== 'WAITING') {
+          setGameState('WAITING');
+          gameStateRef.current = 'WAITING';
+          smoothMultiplierRef.current = 1.00;
+          targetMultiplierRef.current = 1.00;
+          setMultiplier(1.00);
+          setCrashedAt(null);
+          flewAwayPos.current.isFlyingOff = false;
+          soundFx.stopFlightSound();
+
+          // Reset bets for the fresh round
+          setBet1(prev => ({
+            ...prev,
+            placedBet: null,
+            hasCashedOut: false,
+            cashoutPayout: 0,
+            cashoutMultiplier: 0
+          }));
+          setBet2(prev => ({
+            ...prev,
+            placedBet: null,
+            hasCashedOut: false,
+            cashoutPayout: 0,
+            cashoutMultiplier: 0
+          }));
+          setBets(generateBotBets());
+        }
+
+        const secLeft = Math.max(0, parseFloat(((round.flightStartTime - now) / 1000).toFixed(1)));
+        setCountdown(secLeft);
+
+        const intSec = Math.floor(secLeft);
+        if (intSec !== lastCountdownSec.current && intSec >= 1 && intSec <= 3) {
+          lastCountdownSec.current = intSec;
           soundFx.playCountdownTick();
         }
-        if (count <= 0) {
-          clearInterval(waitInterval);
-          startFlyingPhase();
-        }
-      }, 500);
-      timer = waitInterval;
-    };
-
-    const startFlyingPhase = () => {
-      localRoundCrash = generateRandomCrash();
-      setGameState('FLYING');
-      gameStateRef.current = 'FLYING';
-      const flightStart = Date.now();
-      flightStartTimeRef.current = flightStart;
-      smoothMultiplierRef.current = 1.00;
-      targetMultiplierRef.current = 1.00;
-      setMultiplier(1.00);
-      flewAwayPos.current.isFlyingOff = false;
-      soundFx.playFlightSound();
-
-      let checkControlCounter = 0;
-
-      const flyInterval = setInterval(() => {
-        const elapsedSec = (Date.now() - flightStart) / 1000;
-        const currentM = parseFloat(Math.pow(Math.E, 0.072 * elapsedSec * 1.65).toFixed(2));
-        targetMultiplierRef.current = currentM;
-        smoothMultiplierRef.current = currentM;
-        setMultiplier(currentM);
-
-        // Check live admin game controls every ~500ms
-        checkControlCounter++;
-        if (checkControlCounter % 5 === 0) {
-          fetchLiveGameControl();
+      } else if (now < round.crashTime) {
+        // ========== 2. FLYING MULTIPLIER PHASE ==========
+        if (gameStateRef.current !== 'FLYING') {
+          setGameState('FLYING');
+          gameStateRef.current = 'FLYING';
+          setCrashedAt(null);
+          flewAwayPos.current.isFlyingOff = false;
+          flightStartTimeRef.current = round.flightStartTime;
+          soundFx.playFlightSound();
         }
 
-        // Auto cashout check for bet1 and bet2
+        const elapsedSec = Math.max(0, (now - round.flightStartTime) / 1000);
+        const curM = parseFloat(Math.pow(Math.E, 0.072 * elapsedSec * 1.65).toFixed(2));
+        const cappedM = Math.min(round.crashedAt, Math.max(1.00, curM));
+
+        smoothMultiplierRef.current = cappedM;
+        targetMultiplierRef.current = cappedM;
+
+        // Throttle React state render to ~12 FPS for high performance
+        const tNow = Date.now();
+        if (tNow - lastReactMultiplierUpdate.current > 80) {
+          lastReactMultiplierUpdate.current = tNow;
+          setMultiplier(cappedM);
+        }
+
+        // Auto Cashout for Bet 1
         setBet1(prev => {
-          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && currentM >= prev.autoCashout) {
+          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && cappedM >= prev.autoCashout) {
             const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
             const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
             onBalanceUpdateRef.current(newBal);
@@ -389,8 +366,9 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
           return prev;
         });
 
+        // Auto Cashout for Bet 2
         setBet2(prev => {
-          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && currentM >= prev.autoCashout) {
+          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && cappedM >= prev.autoCashout) {
             const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
             const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
             onBalanceUpdateRef.current(newBal);
@@ -400,43 +378,33 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
           }
           return prev;
         });
-
-        // Crash check
-        if (currentM >= localRoundCrash) {
-          clearInterval(flyInterval);
-          flyIntervalRef.current = null;
-          handleLocalCrash(localRoundCrash);
+      } else {
+        // ========== 3. CRASHED / FLEW AWAY PHASE ==========
+        if (gameStateRef.current !== 'CRASHED') {
+          soundFx.stopFlightSound();
+          setGameState('CRASHED');
+          gameStateRef.current = 'CRASHED';
+          const crashVal = round.crashedAt || smoothMultiplierRef.current;
+          setCrashedAt(crashVal);
+          smoothMultiplierRef.current = crashVal;
+          targetMultiplierRef.current = crashVal;
+          setMultiplier(crashVal);
+          flewAwayPos.current.isFlyingOff = true;
+          soundFx.playCrash();
+          setHistory(prev => [crashVal, ...prev.filter(h => h !== crashVal).slice(0, 11)]);
         }
-      }, 100);
 
-      flyIntervalRef.current = flyInterval;
-      timer = flyInterval;
-    };
-
-    const handleLocalCrash = (crashedVal) => {
-      soundFx.stopFlightSound();
-      setGameState('CRASHED');
-      gameStateRef.current = 'CRASHED';
-      setCrashedAt(crashedVal);
-      smoothMultiplierRef.current = crashedVal;
-      targetMultiplierRef.current = crashedVal;
-      setMultiplier(crashedVal);
-      flewAwayPos.current.isFlyingOff = true;
-      soundFx.playCrash();
-      setHistory(prev => [crashedVal, ...prev.slice(0, 11)]);
-
-      // Wait 3.5s then start next waiting phase
-      timer = setTimeout(() => {
-        startWaitingPhase();
-      }, 3500);
-    };
-
-    startWaitingPhase();
+        // When round cycle completes, immediately poll for the fresh round state
+        if (now >= round.nextRoundStartTime) {
+          pollLiveRound();
+        }
+      }
+    }, 50);
 
     return () => {
-      clearInterval(timer);
-      clearTimeout(timer);
-      if (flyIntervalRef.current) clearInterval(flyIntervalRef.current);
+      isMounted = false;
+      clearInterval(pollInterval);
+      clearInterval(tickInterval);
       soundFx.stopFlightSound();
     };
   }, [socket]);
