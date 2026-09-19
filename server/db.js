@@ -349,15 +349,19 @@ async function processTransaction(txId, action, adminNotes = '') {
 
 function getTransactions(userId = null) {
   const db = readDB();
+  const list = Array.isArray(db.transactions) ? db.transactions : [];
   if (userId) {
-    return db.transactions.filter(t => t.userId === userId);
+    return list.filter(t => t.userId === userId);
   }
-  return db.transactions;
+  return list;
 }
 
 // Bets & Stats
 async function recordBet({ userId, username, game, betAmount, multiplier, payout, status }) {
   const db = readDB();
+  if (!Array.isArray(db.bets)) db.bets = [];
+  if (!db.stats) db.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
+
   const bet = {
     id: `bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
     userId,
@@ -374,8 +378,8 @@ async function recordBet({ userId, username, game, betAmount, multiplier, payout
   if (db.bets.length > 500) db.bets.pop(); // Keep last 500 records
 
   // Update overall platform statistics
-  db.stats.totalWagered = Math.round((db.stats.totalWagered + betAmount) * 100) / 100;
-  db.stats.totalPayouts = Math.round((db.stats.totalPayouts + payout) * 100) / 100;
+  db.stats.totalWagered = Math.round(((db.stats.totalWagered || 0) + betAmount) * 100) / 100;
+  db.stats.totalPayouts = Math.round(((db.stats.totalPayouts || 0) + payout) * 100) / 100;
   db.stats.grossGamingRevenue = Math.round((db.stats.totalWagered - db.stats.totalPayouts) * 100) / 100;
 
   await writeDB(db);
@@ -384,17 +388,31 @@ async function recordBet({ userId, username, game, betAmount, multiplier, payout
 
 function getRecentBets(limit = 20) {
   const db = readDB();
-  return db.bets.slice(0, limit);
+  const list = Array.isArray(db.bets) ? db.bets : [];
+  return list.slice(0, limit);
 }
 
 function getGameSettings() {
   const db = readDB();
+  if (!db.gameSettings) {
+    db.gameSettings = {
+      crashRtp: 96,
+      houseEdge: 4,
+      minBet: 10,
+      maxBet: 50000,
+      maxPayout: 1000000,
+      maintenance: false,
+      aviatorMode: 'fair',
+      forcedNextMultiplier: null,
+      crashNowTriggered: 0
+    };
+  }
   return db.gameSettings;
 }
 
 async function updateGameSettings(newSettings) {
   const db = readDB();
-  db.gameSettings = { ...db.gameSettings, ...newSettings };
+  db.gameSettings = { ...getGameSettings(), ...newSettings };
   await writeDB(db);
   return db.gameSettings;
 }

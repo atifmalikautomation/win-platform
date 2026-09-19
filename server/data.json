@@ -57,6 +57,29 @@
       "bonusBalance": 0,
       "createdAt": "2026-09-19T07:09:56.115Z",
       "isBanned": false
+    },
+    {
+      "id": "usr_1789802224617_z1bsuj",
+      "username": "saqibtest",
+      "email": "saqib.test.live@gmail.com",
+      "passwordHash": "$2b$10$K3DNG.1VaPvb41knxBWzcOEXjmjV0/fVzzs79bdKP82C6yT1PJV52",
+      "role": "user",
+      "balance": 0,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-19T07:17:04.794Z",
+      "isBanned": false
+    },
+    {
+      "id": "usr_1789802285312_z8p1n2",
+      "username": "atifmalikfreel",
+      "email": "atifmalikfreelancer@gmail.com",
+      "passwordHash": "$2b$10$y1d4Cdlb2s4S.4gn8fsSceg6hr3h3omvqaIrsL5lntbUjOeDHBG1i",
+      "role": "user",
+      "balance": 5000,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-19T07:18:05.405Z",
+      "isBanned": false
     }
-  ]
+  ],
+  "bets": []
 }

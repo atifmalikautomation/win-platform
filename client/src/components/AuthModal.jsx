@@ -198,10 +198,20 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
     const cleanEmail = email.trim().toLowerCase();
     const cleanPassword = password.trim();
 
+    const isAttemptingAdmin = cleanUsername.toLowerCase() === 'saqib_admin' ||
+      cleanUsername.toLowerCase() === '60secscriptdoc@gmail.com' ||
+      cleanUsername.toLowerCase().includes('admin');
+
+    if (!isAdminMode && isAttemptingAdmin) {
+      setError('⚠️ Super Admin account player login se allow nahi hai. Pehly neechay "Super Admin Portal Login" par click karein.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const body = mode === 'login'
-        ? { identifier: cleanUsername, password: cleanPassword }
+        ? { identifier: cleanUsername, password: cleanPassword, portal: isAdminMode ? 'admin' : 'player' }
         : { username: cleanUsername, email: cleanEmail, password: cleanPassword };
 
       let data = null;
@@ -257,6 +267,9 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
             bonusBalance: 0.0
           };
         } else if (!userFound && (cleanId === 'saqib_admin' || cleanId === '60secscriptdoc@gmail.com') && (cleanPassword === 'SkyWin#Saqib2026!' || cleanPassword === 'admin123')) {
+          if (!isAdminMode) {
+            throw new Error('⚠️ Super Admin account player login se allow nahi hai. Pehly neechay "Super Admin Portal Login" par click karein.');
+          }
           userFound = {
             id: 'usr_saqib_admin',
             username: 'saqib_admin',

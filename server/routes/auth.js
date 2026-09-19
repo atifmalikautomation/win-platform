@@ -136,11 +136,17 @@ router.post('/login', async (req, res) => {
       match = user.password === password;
     }
 
-    if (!match) {
-      return res.status(400).json({ error: 'Incorrect password' });
+    const portal = (req.body.portal || '').trim().toLowerCase();
+    const isAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || user.role === 'admin' || cleanUser.includes('admin'));
+
+    // Admin account CANNOT log in from player form unless portal === 'admin'
+    if (isAdminAccount && portal !== 'admin') {
+      return res.status(403).json({
+        error: '⚠️ Admin account player login se allow nahi hai. Pehly neechay "Super Admin Portal Login" par click karein.'
+      });
     }
 
-    const effectiveRole = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanUser.includes('admin')) ? 'admin' : (user.role || 'user');
+    const effectiveRole = (isAdminAccount && portal === 'admin') ? 'admin' : (user.role === 'admin' && portal === 'admin' ? 'admin' : 'user');
     user.role = effectiveRole;
 
     const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });

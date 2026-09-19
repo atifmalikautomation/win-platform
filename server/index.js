@@ -12,6 +12,7 @@ const { router: authRouter, authenticateToken, JWT_SECRET } = require('./routes/
 const cashierRouter = require('./routes/cashier');
 const adminRouter = require('./routes/admin');
 const { router: minesRouter } = require('./routes/mines');
+const crashRouter = require('./routes/crash');
 
 const app = express();
 const server = http.createServer(app);
@@ -57,6 +58,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/cashier', cashierRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/mines', minesRouter);
+app.use('/api/crash', crashRouter);
 
 // Serve built frontend statically if available
 const clientDistPath = path.join(__dirname, '../client/dist');

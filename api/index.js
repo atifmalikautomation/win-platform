@@ -4,6 +4,7 @@ const { router: authRouter } = require('../server/routes/auth');
 const cashierRouter = require('../server/routes/cashier');
 const adminRouter = require('../server/routes/admin');
 const { router: minesRouter } = require('../server/routes/mines');
+const crashRouter = require('../server/routes/crash');
 const { verifyRound } = require('../server/provablyFair');
 
 const app = express();
@@ -37,6 +38,7 @@ app.use(['/api/auth', '/auth'], authRouter);
 app.use(['/api/cashier', '/cashier'], cashierRouter);
 app.use(['/api/admin', '/admin'], adminRouter);
 app.use(['/api/mines', '/mines'], minesRouter);
+app.use(['/api/crash', '/crash'], crashRouter);
 
 // Health check
 app.get(['/api/health', '/health', '/api', '/'], (req, res) => {
