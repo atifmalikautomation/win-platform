@@ -44,7 +44,7 @@ router.post('/start', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'You already have an active game in progress' });
     }
 
-    if (db.syncWithCloud) await db.syncWithCloud();
+    if (db.syncWithCloud) await db.syncWithCloud(true);
 
     // Deduct balance atomically
     const newBalance = await db.updateUserBalance(req.user.id, -numBet);

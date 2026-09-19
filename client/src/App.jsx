@@ -96,6 +96,67 @@ export default function App() {
     };
   }, []);
 
+  // Real-time Cloud Balance Sync (Polls every 2.5s and listens to cross-tab storage changes)
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncBalanceFromCloud = async () => {
+      const token = localStorage.getItem('luckywin_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.user && isMounted) {
+          const remoteBal = Number(data.user.balance);
+          const remoteTS = Number(data.user.balanceUpdatedAt || 0);
+
+          setBalance(prevBal => {
+            if (remoteBal !== prevBal) {
+              const updatedUser = { ...data.user, balance: remoteBal, balanceUpdatedAt: remoteTS };
+              setUser(updatedUser);
+              localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
+              return remoteBal;
+            }
+            return prevBal;
+          });
+        }
+      } catch (e) {}
+    };
+
+    const interval = setInterval(syncBalanceFromCloud, 2500);
+
+    const handleStorageChange = (e) => {
+      if (e.key === 'luckywin_active_user' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && parsed.balance !== undefined) {
+            setBalance(Number(parsed.balance));
+            setUser(parsed);
+          }
+        } catch (err) {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    const handleCustomSync = (e) => {
+      if (e.detail !== undefined) {
+        setBalance(Number(e.detail));
+      }
+    };
+    window.addEventListener('platform_balance_sync', handleCustomSync);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('platform_balance_sync', handleCustomSync);
+    };
+  }, [user?.id]);
+
   const handleAuthSuccess = (userData) => {
     const withTS = { ...userData, balanceUpdatedAt: Date.now() };
     setUser(withTS);
@@ -126,6 +187,7 @@ export default function App() {
         localUsers[idx].balanceUpdatedAt = now;
         localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
       }
+      window.dispatchEvent(new CustomEvent('platform_balance_sync', { detail: formatted }));
     }
   };
 

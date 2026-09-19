@@ -243,8 +243,12 @@ async function writeDB(data) {
   } catch (err) {
     console.warn('writeDB filesystem write failed (using memory cache):', err.message);
   }
-  // Push to cloud in background without stalling HTTP response
-  pushToCloud(data).catch(err => console.error('Background cloud push error:', err.message));
+  // Await cloud push so serverless lambda does not suspend before blob write finishes
+  try {
+    await pushToCloud(data);
+  } catch (err) {
+    console.error('Cloud push error:', err.message);
+  }
 }
 
 // User Helpers
@@ -308,6 +312,7 @@ async function createUser({ username, email, password, role = 'user', initialBal
 
 // Atomic Balance Adjustment with safety checks
 async function updateUserBalance(userId, deltaAmount) {
+  if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
   const user = db.users.find(u => u.id === userId);
   if (!user) throw new Error('User not found');
@@ -322,6 +327,50 @@ async function updateUserBalance(userId, deltaAmount) {
   user.version = (user.version || 0) + 1;
   await writeDB(db);
   return newBalance;
+}
+
+// Set Exact User Balance (e.g. from Admin direct set)
+async function setUserExactBalance(userId, exactAmount) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) throw new Error('User not found');
+
+  const newBalance = Math.max(0, Math.round(Number(exactAmount) * 100) / 100);
+  user.balance = newBalance;
+  user.balanceUpdatedAt = Date.now();
+  user.version = (user.version || 0) + 1;
+  await writeDB(db);
+  return newBalance;
+}
+
+// Permanently Delete User Account
+async function deleteUser(userId) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  const userIdx = db.users.findIndex(u => u.id === userId);
+  if (userIdx === -1) throw new Error('User not found');
+
+  const user = db.users[userIdx];
+  const cleanName = (user.username || '').toLowerCase();
+  const cleanEmail = (user.email || '').toLowerCase();
+  if (cleanName === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanName.includes('admin')) {
+    throw new Error('Super Admin account cannot be deleted');
+  }
+
+  // Remove user
+  db.users.splice(userIdx, 1);
+  // Remove user bets
+  if (Array.isArray(db.bets)) {
+    db.bets = db.bets.filter(b => b.userId !== userId);
+  }
+  // Remove user transactions
+  if (Array.isArray(db.transactions)) {
+    db.transactions = db.transactions.filter(t => t.userId !== userId);
+  }
+
+  await writeDB(db);
+  return { success: true, deletedUserId: userId, username: user.username };
 }
 
 // Transactions / Cashier
@@ -499,6 +548,8 @@ module.exports = {
   findUserByIdentifier,
   createUser,
   updateUserBalance,
+  setUserExactBalance,
+  deleteUser,
   createTransaction,
   processTransaction,
   getTransactions,

@@ -171,17 +171,26 @@ router.post('/sync-users', authenticateToken, requireAdmin, async (req, res) => 
   }
 });
 
-// Manual Balance Adjustment or Ban user
+// Manual Balance Adjustment, Set Exact Balance, Ban, or Delete user
 router.post('/users/:id/action', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { action, amount, isBanned } = req.body;
-    if (db.syncWithCloud) await db.syncWithCloud();
+    if (db.syncWithCloud) await db.syncWithCloud(true);
     const currentDb = db.readDB();
     const user = currentDb.users.find(u => u.id === req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    if (action === 'delete') {
+      const result = await db.deleteUser(user.id);
+      return res.json({ message: `User ${user.username} deleted permanently`, ...result });
+    }
+
     if (action === 'adjust_balance' && typeof amount === 'number') {
-      await db.updateUserBalance(user.id, amount);
+      const newBal = await db.updateUserBalance(user.id, amount);
+      user.balance = newBal;
+    } else if (action === 'set_balance' && typeof amount === 'number') {
+      const newBal = await db.setUserExactBalance(user.id, amount);
+      user.balance = newBal;
     }
 
     if (typeof isBanned === 'boolean') {
@@ -189,7 +198,17 @@ router.post('/users/:id/action', authenticateToken, requireAdmin, async (req, re
       await db.writeDB(currentDb);
     }
 
-    res.json({ message: 'User updated successfully', user });
+    res.json({ message: 'User updated successfully', user, newBalance: user.balance });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Permanently Delete User
+router.delete('/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.deleteUser(req.params.id);
+    res.json({ message: `User deleted permanently`, ...result });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

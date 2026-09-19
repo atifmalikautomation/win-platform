@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sliders, CheckCircle, RefreshCw, RotateCcw, Eye, X, Flame, Bomb, Target, AlertOctagon, ShieldAlert, Sparkles, Search, Users, Calendar, UserCheck, Copy, Check, Mail, Clock, ShieldCheck, AtSign } from 'lucide-react';
+import { Sliders, CheckCircle, RefreshCw, RotateCcw, Eye, X, Flame, Bomb, Target, AlertOctagon, ShieldAlert, Sparkles, Search, Users, Calendar, UserCheck, Copy, Check, Mail, Clock, ShieldCheck, AtSign, Trash2 } from 'lucide-react';
 
 const GoogleGIcon = () => (
   <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
@@ -36,6 +36,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userFilterTab, setUserFilterTab] = useState('all'); // 'all' | 'gmail' | 'email' | 'active' | 'banned'
   const [copiedEmailId, setCopiedEmailId] = useState(null);
+  const [adjustMode, setAdjustMode] = useState('set'); // 'set' | 'adjust'
   const [activeTab, setActiveTab] = useState('cashier'); // 'cashier' | 'game_controls' | 'settings' | 'users'
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -404,7 +405,14 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
   const handleUserBalanceAdjust = async (e) => {
     e.preventDefault();
     if (!selectedUser) return;
-    const delta = Number(adjustAmount);
+    const val = Number(adjustAmount);
+    if (isNaN(val)) return alert('Enter a valid numeric amount');
+
+    const action = adjustMode === 'set' ? 'set_balance' : 'adjust_balance';
+    const finalBal = adjustMode === 'set'
+      ? Math.max(0, parseFloat(val.toFixed(2)))
+      : Math.max(0, parseFloat(((selectedUser.balance || 0) + val).toFixed(2)));
+
     try {
       const token = localStorage.getItem('luckywin_token');
       await fetch(`/api/admin/users/${selectedUser.id}/action`, {
@@ -414,31 +422,74 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          action: 'adjust_balance',
-          amount: delta
+          action,
+          amount: val
         })
       });
     } catch (err) {}
 
     // Immediate local cache update
+    const nowTS = Date.now();
     const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
     const idx = localUsers.findIndex(u => u.id === selectedUser.id || u.username === selectedUser.username);
-    const newBal = Math.max(0, parseFloat(((selectedUser.balance || 0) + delta).toFixed(2)));
     if (idx !== -1) {
-      localUsers[idx].balance = newBal;
+      localUsers[idx].balance = finalBal;
+      localUsers[idx].balanceUpdatedAt = nowTS;
       localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
     } else {
-      localUsers.push({ ...selectedUser, balance: newBal });
+      localUsers.push({ ...selectedUser, balance: finalBal, balanceUpdatedAt: nowTS });
       localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
     }
 
-    setUsersList(prev => prev.map(u => u.id === selectedUser.id ? { ...u, balance: newBal } : u));
+    setUsersList(prev => prev.map(u => u.id === selectedUser.id ? { ...u, balance: finalBal, balanceUpdatedAt: nowTS } : u));
+    
+    // If active user on this tab is being adjusted:
     if (selectedUser.id === user?.id && onBalanceUpdate) {
-      onBalanceUpdate(newBal);
+      onBalanceUpdate(finalBal);
     }
+
+    // Broadcast instant balance update event
+    window.dispatchEvent(new CustomEvent('platform_balance_sync', { detail: finalBal }));
+
     setSelectedUser(null);
-    setMessage({ type: 'success', text: `Balance updated: ${selectedUser.username} now has PKR ${newBal.toLocaleString()}` });
+    setMessage({ type: 'success', text: `✅ Balance updated: ${selectedUser.username} now has PKR ${finalBal.toLocaleString()}` });
     setTimeout(() => setMessage(null), 3500);
+  };
+
+  const handleDeleteUser = async (u) => {
+    const cleanUser = (u.username || '').toLowerCase();
+    const cleanEmail = (u.email || '').toLowerCase();
+    if (u.role === 'admin' || cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanUser.includes('admin')) {
+      alert('⚠️ Super Admin account cannot be deleted!');
+      return;
+    }
+
+    if (!window.confirm(`⚠️ Confirm Permanent Delete: Kya aap waqai user "${u.username}" (${u.email || 'No email'}) ko platform se mukammal delete karna chahte hain? User ka tamam balance aur data delete ho jayega.`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('luckywin_token');
+      const res = await fetch(`/api/admin/users/${u.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete user');
+
+      // Remove from usersList
+      setUsersList(prev => prev.filter(userItem => userItem.id !== u.id));
+
+      // Remove from localStorage
+      const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
+      const updated = localUsers.filter(userItem => userItem.id !== u.id && userItem.username !== u.username);
+      localStorage.setItem('luckywin_local_users', JSON.stringify(updated));
+
+      setMessage({ type: 'success', text: `🗑️ User "${u.username}" was permanently deleted!` });
+      setTimeout(() => setMessage(null), 3500);
+    } catch (err) {
+      alert(err.message || 'Error deleting user');
+    }
   };
 
   const handleToggleBan = async (userId, currentBanned) => {
@@ -1429,20 +1480,30 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                           {/* 8. Actions */}
                           <td className="py-3.5 text-right pr-1 space-x-1.5 whitespace-nowrap">
                             <button
-                              onClick={() => { setSelectedUser(u); setAdjustAmount(500); }}
+                              onClick={() => { setSelectedUser(u); setAdjustAmount(u.balance || 0); setAdjustMode('set'); }}
                               className="px-2.5 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white font-bold text-[11px] transition-colors shadow"
                             >
                               Adjust Balance
                             </button>
                             {u.role !== 'admin' && (
-                              <button
-                                onClick={() => handleToggleBan(u.id, u.isBanned)}
-                                className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow ${
-                                  u.isBanned ? 'bg-emerald-600/80 hover:bg-emerald-600 text-white' : 'bg-rose-600/80 hover:bg-rose-600 text-white'
-                                }`}
-                              >
-                                {u.isBanned ? 'Unban' : 'Ban'}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handleToggleBan(u.id, u.isBanned)}
+                                  className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow ${
+                                    u.isBanned ? 'bg-emerald-600/80 hover:bg-emerald-600 text-white' : 'bg-amber-600/80 hover:bg-amber-600 text-white'
+                                  }`}
+                                >
+                                  {u.isBanned ? 'Unban' : 'Ban'}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(u)}
+                                  title="Delete User Permanently"
+                                  className="px-2.5 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow bg-rose-600/80 hover:bg-rose-600 text-white inline-flex items-center gap-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Delete
+                                </button>
+                              </>
                             )}
                           </td>
                         </tr>
@@ -1459,29 +1520,74 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
       {/* Adjust Balance Modal */}
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-6 w-full max-w-sm">
-            <h3 className="text-sm font-black text-white mb-2">Adjust Balance for {selectedUser.username}</h3>
-            <p className="text-xs text-slate-400 mb-4">
-              Enter positive amount to credit, or negative to debit.
-            </p>
+          <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-6 w-full max-w-sm space-y-4">
+            <div>
+              <h3 className="text-sm font-black text-white flex items-center gap-2">
+                <span>Manage Balance: {selectedUser.username}</span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Current Wallet: <strong className="text-emerald-400 font-mono">PKR {(Number(selectedUser.balance) || 0).toLocaleString()}</strong>
+              </p>
+            </div>
+
+            {/* Mode Selector */}
+            <div className="flex bg-[#090c13] p-1 rounded-xl border border-slate-800 text-xs">
+              <button
+                type="button"
+                onClick={() => { setAdjustMode('set'); setAdjustAmount(selectedUser.balance || 0); }}
+                className={`flex-1 py-1.5 rounded-lg font-bold transition-all ${
+                  adjustMode === 'set' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Set Exact Balance
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAdjustMode('adjust'); setAdjustAmount(500); }}
+                className={`flex-1 py-1.5 rounded-lg font-bold transition-all ${
+                  adjustMode === 'adjust' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Add / Deduct Amount
+              </button>
+            </div>
+
             <form onSubmit={handleUserBalanceAdjust} className="space-y-3">
-              <input
-                type="number"
-                value={adjustAmount}
-                onChange={(e) => setAdjustAmount(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
-              />
-              <div className="flex gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">
+                  {adjustMode === 'set' ? 'New Exact Balance (PKR)' : 'Credit (+) or Debit (-) Amount (PKR)'}
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  value={adjustAmount}
+                  onChange={(e) => setAdjustAmount(e.target.value)}
+                  placeholder={adjustMode === 'set' ? 'e.g. 2500' : 'e.g. 500 or -200'}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                />
+                {adjustMode === 'set' && (
+                  <span className="text-[10px] text-slate-500 mt-1 block">
+                    User ka balance foran yahi exact amount ban jayega aur user ko usi waqt live show hoga.
+                  </span>
+                )}
+                {adjustMode === 'adjust' && (
+                  <span className="text-[10px] text-slate-500 mt-1 block">
+                    Resulting balance: PKR {Math.max(0, (Number(selectedUser.balance) || 0) + Number(adjustAmount || 0)).toLocaleString()}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-1">
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs"
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-colors"
                 >
-                  Apply Balance
+                  {adjustMode === 'set' ? 'Set Balance Now' : 'Apply Adjustment'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedUser(null)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs"
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors"
                 >
                   Cancel
                 </button>

@@ -209,11 +209,8 @@ router.post('/bet', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Minimum bet is PKR 10' });
     }
 
+    if (db.syncWithCloud) await db.syncWithCloud(true);
     let user = db.findUserById(req.user.id);
-    if (!user && db.syncWithCloud) {
-      await db.syncWithCloud(true);
-      user = db.findUserById(req.user.id);
-    }
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
