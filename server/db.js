@@ -18,30 +18,37 @@ let lastLocalWrite = 0;
 async function syncWithCloud(force = false) {
   const now = Date.now();
 
-  // If this process just wrote data within the last 3 seconds, local memory is newer than edge CDN propagation
-  if (memoryCache && Array.isArray(memoryCache.users) && (now - lastLocalWrite < 3000)) {
+  // If this process just wrote data within the last 1.5 seconds, local memory is newer
+  if (memoryCache && Array.isArray(memoryCache.users) && (now - lastLocalWrite < 1500)) {
     return memoryCache;
   }
 
-  // If not forced and synced within the last 1500ms, use current cache
-  if (!force && memoryCache && Array.isArray(memoryCache.users) && (now - lastCloudSync < 1500)) {
+  // If not forced and synced within the last 800ms, use current cache
+  if (!force && memoryCache && Array.isArray(memoryCache.users) && (now - lastCloudSync < 800)) {
     return memoryCache;
   }
 
-  // 1. Primary: Official Vercel Private Blob Storage (cache-busted real-time fetch)
+  // 1. Primary: Official Vercel Private Blob Storage with absolute CDN cache-busting
   try {
-    const cacheBusterUrl = `https://qhxj3ttyzwbzkgca.private.blob.vercel-storage.com/${BLOB_FILE_NAME}?t=${now}`;
+    const cacheBusterUrl = `https://qhxj3ttyzwbzkgca.private.blob.vercel-storage.com/${BLOB_FILE_NAME}?download=1&_t=${now}`;
     const res = await fetch(cacheBusterUrl, {
-      headers: { Authorization: `Bearer ${BLOB_TOKEN}` },
+      headers: {
+        Authorization: `Bearer ${BLOB_TOKEN}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      },
       cache: 'no-store'
     });
     if (res.ok) {
       const json = await res.json();
       if (json && Array.isArray(json.users) && json.users.length > 0) {
         // Guard: If a local write occurred while the fetch was in flight, do not overwrite!
-        if (now - lastLocalWrite < 3000 && memoryCache) {
+        if (now - lastLocalWrite < 1500 && memoryCache) {
           return memoryCache;
         }
+        if (!Array.isArray(json.transactions)) json.transactions = [];
+        if (!Array.isArray(json.bets)) json.bets = [];
+        if (!json.stats) json.stats = { totalWagered: 0, totalPayouts: 0, grossGamingRevenue: 0 };
         memoryCache = json;
         lastCloudSync = now;
         try {
@@ -61,6 +68,9 @@ async function syncWithCloud(force = false) {
       if (res.ok) {
         const json = await res.json();
         if (json && json.data && Array.isArray(json.data.users)) {
+          if (!Array.isArray(json.data.transactions)) json.data.transactions = [];
+          if (!Array.isArray(json.data.bets)) json.data.bets = [];
+          if (!json.data.stats) json.data.stats = { totalWagered: 0, totalPayouts: 0, grossGamingRevenue: 0 };
           memoryCache = json.data;
           lastCloudSync = now;
           try {
@@ -187,9 +197,27 @@ function readDB() {
     try {
       const raw = fs.readFileSync(DB_PATH, 'utf8');
       memoryCache = JSON.parse(raw);
-      return memoryCache;
     } catch (err) {
       console.warn('Error reading DB_PATH file, using memory cache:', err.message);
+    }
+  }
+  if (memoryCache) {
+    if (!Array.isArray(memoryCache.users)) memoryCache.users = [];
+    if (!Array.isArray(memoryCache.bets)) memoryCache.bets = [];
+    if (!Array.isArray(memoryCache.transactions)) memoryCache.transactions = [];
+    if (!memoryCache.stats) memoryCache.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
+    if (!memoryCache.gameSettings) {
+      memoryCache.gameSettings = {
+        crashRtp: 96,
+        houseEdge: 4,
+        minBet: 10,
+        maxBet: 50000,
+        maxPayout: 1000000,
+        maintenance: false,
+        aviatorMode: 'fair',
+        forcedNextMultiplier: null,
+        crashNowTriggered: 0
+      };
     }
   }
   return memoryCache;
@@ -339,6 +367,7 @@ async function deleteUser(userId) {
 
 // Transactions / Cashier
 async function createTransaction({ userId, username, type, method, amount, accountNumber, reference, proofUrl = '', proofScreenshot = '' }) {
+  if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
   const tx = {
     id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -363,6 +392,8 @@ async function createTransaction({ userId, username, type, method, amount, accou
       throw new Error('Insufficient balance for withdrawal');
     }
     user.balance = Math.round((user.balance - amount) * 100) / 100;
+    user.balanceUpdatedAt = Date.now();
+    user.version = (user.version || 0) + 1;
   }
 
   db.transactions.unshift(tx);
@@ -371,6 +402,7 @@ async function createTransaction({ userId, username, type, method, amount, accou
 }
 
 async function processTransaction(txId, action, adminNotes = '') {
+  if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
   const tx = db.transactions.find(t => t.id === txId);
   if (!tx) throw new Error('Transaction not found');
@@ -386,6 +418,8 @@ async function processTransaction(txId, action, adminNotes = '') {
     // For approved deposit, credit user balance
     if (tx.type === 'deposit' && user) {
       user.balance = Math.round((user.balance + tx.amount) * 100) / 100;
+      user.balanceUpdatedAt = Date.now();
+      user.version = (user.version || 0) + 1;
     }
   } else if (action === 'reject') {
     tx.status = 'rejected';
@@ -394,6 +428,8 @@ async function processTransaction(txId, action, adminNotes = '') {
     // If withdrawal was rejected, refund the reserved balance back to user
     if (tx.type === 'withdraw' && user) {
       user.balance = Math.round((user.balance + tx.amount) * 100) / 100;
+      user.balanceUpdatedAt = Date.now();
+      user.version = (user.version || 0) + 1;
     }
   }
 

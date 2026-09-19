@@ -186,19 +186,27 @@ router.post('/users/:id/action', authenticateToken, requireAdmin, async (req, re
     }
 
     if (action === 'adjust_balance' && typeof amount === 'number') {
-      const newBal = await db.updateUserBalance(user.id, amount);
-      user.balance = newBal;
+      await db.updateUserBalance(user.id, amount);
     } else if (action === 'set_balance' && typeof amount === 'number') {
-      const newBal = await db.setUserExactBalance(user.id, amount);
-      user.balance = newBal;
+      await db.setUserExactBalance(user.id, amount);
     }
 
     if (typeof isBanned === 'boolean') {
-      user.isBanned = isBanned;
-      await db.writeDB(currentDb);
+      const latestDb = db.readDB();
+      const targetUser = latestDb.users.find(u => u.id === user.id);
+      if (targetUser) {
+        targetUser.isBanned = isBanned;
+        await db.writeDB(latestDb);
+      }
     }
 
-    res.json({ message: 'User updated successfully', user, newBalance: user.balance });
+    const freshUser = db.findUserById(user.id) || user;
+    res.json({
+      message: 'User updated successfully',
+      user: freshUser,
+      newBalance: freshUser.balance,
+      balanceUpdatedAt: freshUser.balanceUpdatedAt || Date.now()
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

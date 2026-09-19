@@ -792,20 +792,21 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     const panel = panelNum === 1 ? bet1 : bet2;
     const setPanel = panelNum === 1 ? setBet1 : setBet2;
 
-    const numAmount = Number(panel.amount);
+    const numAmount = Math.max(10, Math.floor(Number(panel.amount) || 0));
     if (isNaN(numAmount) || numAmount < 10) {
       alert('Minimum bet is PKR 10');
       return;
     }
     if (numAmount > balanceRef.current) {
-      alert('Insufficient balance! Please deposit to continue.');
+      alert(`Insufficient balance! Your current balance is PKR ${balanceRef.current}. Please deposit to continue.`);
       return;
     }
 
     soundFx.playBet();
 
     // 1. Immediate UI deduction and optimistic placement
-    const newBal = parseFloat((balanceRef.current - numAmount).toFixed(2));
+    const newBal = parseFloat(Math.max(0, balanceRef.current - numAmount).toFixed(2));
+    balanceRef.current = newBal;
     onBalanceUpdateRef.current(newBal);
 
     const localBet = {
@@ -831,12 +832,16 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       const token = localStorage.getItem('luckywin_token');
       socket.emit('crash:bet', {
         token,
-        amount: panel.amount,
+        amount: numAmount,
         autoCashout: panel.autoCashoutEnabled ? panel.autoCashout : null
       }, (res) => {
         if (res?.success) {
           setPanel(prev => ({ ...prev, placedBet: res.bet }));
-          if (res.newBalance !== undefined) onBalanceUpdateRef.current(res.newBalance);
+          if (res.newBalance !== undefined && Number(res.newBalance) >= 0) {
+            const confirmed = Number(res.newBalance);
+            balanceRef.current = confirmed;
+            onBalanceUpdateRef.current(confirmed);
+          }
         }
       });
     } else {
@@ -857,8 +862,10 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         .then(res => {
           if (res && res.bet) {
             setPanel(prev => ({ ...prev, placedBet: { ...localBet, id: res.bet.id } }));
-            if (res.newBalance !== undefined) {
-              onBalanceUpdateRef.current(res.newBalance);
+            if (res.newBalance !== undefined && Number(res.newBalance) >= 0) {
+              const confirmed = Number(res.newBalance);
+              balanceRef.current = confirmed;
+              onBalanceUpdateRef.current(confirmed);
             }
           }
         })
@@ -875,6 +882,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     const currentMultiplier = explicitMultiplier || smoothMultiplierRef.current || multiplier;
     const payout = parseFloat((panel.placedBet.amount * currentMultiplier).toFixed(2));
     const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
+    balanceRef.current = newBal;
     onBalanceUpdateRef.current(newBal);
 
     setPanel(prev => ({
@@ -897,8 +905,10 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         token,
         betId: panel.placedBet.id
       }, (res) => {
-        if (res?.success && res.newBalance !== undefined) {
-          onBalanceUpdateRef.current(res.newBalance);
+        if (res?.success && res.newBalance !== undefined && Number(res.newBalance) >= 0) {
+          const confirmed = Number(res.newBalance);
+          balanceRef.current = confirmed;
+          onBalanceUpdateRef.current(confirmed);
         }
       });
     } else {
@@ -918,8 +928,10 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         })
         .then(r => r.ok ? r.json() : null)
         .then(res => {
-          if (res && res.newBalance !== undefined) {
-            onBalanceUpdateRef.current(res.newBalance);
+          if (res && res.newBalance !== undefined && Number(res.newBalance) >= 0) {
+            const confirmed = Number(res.newBalance);
+            balanceRef.current = confirmed;
+            onBalanceUpdateRef.current(confirmed);
           }
         })
         .catch(() => {});

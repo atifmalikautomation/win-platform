@@ -342,6 +342,9 @@ router.post('/google', async (req, res) => {
 
 // Current User profile & fresh balance
 router.get('/me', authenticateToken, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   if (db.syncWithCloud) await db.syncWithCloud(true);
   const freshUser = db.findUserById(req.user.id) || req.user;
   res.json({
@@ -350,9 +353,10 @@ router.get('/me', authenticateToken, async (req, res) => {
       username: freshUser.username,
       email: freshUser.email,
       role: freshUser.role,
-      balance: freshUser.balance,
-      bonusBalance: freshUser.bonusBalance,
+      balance: Number(freshUser.balance !== undefined ? freshUser.balance : 0),
+      bonusBalance: Number(freshUser.bonusBalance !== undefined ? freshUser.bonusBalance : 0),
       balanceUpdatedAt: freshUser.balanceUpdatedAt || 0,
+      version: freshUser.version || 0,
       authProvider: freshUser.authProvider || (freshUser.email?.includes('@gmail.com') ? 'google' : 'email'),
       lastLogin: freshUser.lastLogin || freshUser.createdAt || null,
       picture: freshUser.picture || ''

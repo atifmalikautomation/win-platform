@@ -409,13 +409,13 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
     if (isNaN(val)) return alert('Enter a valid numeric amount');
 
     const action = adjustMode === 'set' ? 'set_balance' : 'adjust_balance';
-    const finalBal = adjustMode === 'set'
+    let finalBal = adjustMode === 'set'
       ? Math.max(0, parseFloat(val.toFixed(2)))
       : Math.max(0, parseFloat(((selectedUser.balance || 0) + val).toFixed(2)));
 
     try {
       const token = localStorage.getItem('luckywin_token');
-      await fetch(`/api/admin/users/${selectedUser.id}/action`, {
+      const res = await fetch(`/api/admin/users/${selectedUser.id}/action`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -426,6 +426,12 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           amount: val
         })
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.newBalance !== undefined) {
+          finalBal = Number(data.newBalance);
+        }
+      }
     } catch (err) {}
 
     // Immediate local cache update
@@ -470,10 +476,17 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
 
     try {
       const token = localStorage.getItem('luckywin_token');
-      const res = await fetch(`/api/admin/users/${u.id}`, {
+      let res = await fetch(`/api/admin/users/${u.id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (!res.ok) {
+        res = await fetch(`/api/admin/users/${u.id}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: 'delete' })
+        });
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to delete user');
 
@@ -1293,8 +1306,90 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
               ))}
             </div>
 
-            {/* Players Table */}
-            <div className="overflow-x-auto">
+            {/* Mobile User Cards (< lg screens: instant visibility of Delete & Balance without side-scroll) */}
+            <div className="lg:hidden space-y-3">
+              {filteredUsers.length === 0 ? (
+                <div className="py-8 text-center text-slate-400">
+                  <p className="font-bold text-slate-300">No user accounts found.</p>
+                </div>
+              ) : (
+                filteredUsers.map(u => {
+                  const isGoogle = isGmailUser(u);
+                  const initials = (u.username || u.email || 'U').slice(0, 2).toUpperCase();
+                  return (
+                    <div key={u.id} className="bg-[#090d16] border border-slate-800 rounded-2xl p-4 space-y-3 shadow">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          {u.picture ? (
+                            <img src={u.picture} alt={u.username} className="w-9 h-9 rounded-full border border-slate-700 object-cover" />
+                          ) : (
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-black ${
+                              isGoogle ? 'bg-blue-600/30 text-blue-400 border border-blue-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            }`}>
+                              {initials}
+                            </div>
+                          )}
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white text-sm">{u.username}</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
+                                u.role === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-400'
+                              }`}>
+                                {u.role === 'admin' ? 'ADMIN' : 'PLAYER'}
+                              </span>
+                            </div>
+                            <span className="font-mono text-[10px] text-slate-400 block truncate max-w-[200px]">
+                              {u.email || u.id}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Balance Badge */}
+                        <div className="text-right">
+                          <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-bold">Balance</span>
+                          <span className="text-[#00c638] font-black font-mono text-sm">
+                            PKR {(Number(u.balance) || 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons: Adjust, Ban, Delete */}
+                      <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                        <button
+                          onClick={() => { setSelectedUser(u); setAdjustAmount(u.balance || 0); setAdjustMode('set'); }}
+                          className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow text-center"
+                        >
+                          💰 Adjust Balance
+                        </button>
+                        {u.role !== 'admin' && (
+                          <>
+                            <button
+                              onClick={() => handleToggleBan(u.id, u.isBanned)}
+                              className={`px-3 py-2 rounded-xl font-bold text-xs ${
+                                u.isBanned ? 'bg-emerald-600/80 text-white' : 'bg-slate-800 text-slate-300'
+                              }`}
+                            >
+                              {u.isBanned ? 'Unban' : 'Ban'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteUser(u)}
+                              title="Delete User Permanently"
+                              className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow inline-flex items-center gap-1 shrink-0"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete User
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Players Table (Desktop screens >= lg) */}
+            <div className="hidden lg:block overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400">
@@ -1498,10 +1593,10 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                                 <button
                                   onClick={() => handleDeleteUser(u)}
                                   title="Delete User Permanently"
-                                  className="px-2.5 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow bg-rose-600/80 hover:bg-rose-600 text-white inline-flex items-center gap-1"
+                                  className="px-2.5 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow bg-rose-600 hover:bg-rose-500 text-white inline-flex items-center gap-1"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
-                                  Delete
+                                  Delete User
                                 </button>
                               </>
                             )}

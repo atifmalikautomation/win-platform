@@ -152,8 +152,9 @@
     }
   },
   "stats": {
-    "totalWagered": 150,
-    "totalPayouts": 250,
-    "grossGamingRevenue": -100
-  }
+    "totalWagered": 750,
+    "totalPayouts": 1500,
+    "grossGamingRevenue": -750
+  },
+  "transactions": []
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
@@ -18,6 +18,7 @@ export default function App() {
   const [balance, setBalance] = useState(0.0);
   const [socket, setSocket] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const lastLocalBalanceActionTime = useRef(0);
 
   // Modals
   const [authModal, setAuthModal] = useState({ isOpen: false, mode: 'login' });
@@ -85,7 +86,7 @@ export default function App() {
     };
   }, []);
 
-  // Real-time Cloud Balance Sync (Polls every 1.2s and listens to cross-tab storage changes)
+  // Real-time Cloud Balance Sync (Polls every 800ms with timestamp-based reconciliation)
   useEffect(() => {
     let isMounted = true;
 
@@ -94,28 +95,43 @@ export default function App() {
       if (!token) return;
 
       try {
-        const res = await fetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${token}` }
+        const res = await fetch(`/api/auth/me?_t=${Date.now()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
+          cache: 'no-store'
         });
         if (!res.ok) return;
         const data = await res.json();
         if (data?.user && isMounted) {
           const remoteBal = Number(data.user.balance !== undefined ? data.user.balance : 0);
+          const serverUpdated = Number(data.user.balanceUpdatedAt || 0);
 
-          setBalance(prevBal => {
-            if (remoteBal !== prevBal) {
-              const updatedUser = { ...data.user, balance: remoteBal };
-              setUser(updatedUser);
-              localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
-              return remoteBal;
-            }
-            return prevBal;
-          });
+          // Timestamp-based reconciliation:
+          // Accept server balance if server timestamp is newer/equal to our last local action,
+          // OR if more than 2.5 seconds have passed since our local action.
+          const timeSinceLocalAction = Date.now() - lastLocalBalanceActionTime.current;
+          const isServerFresh = serverUpdated >= lastLocalBalanceActionTime.current || timeSinceLocalAction > 2500;
+
+          if (isServerFresh) {
+            setBalance(prevBal => {
+              if (remoteBal !== prevBal) {
+                const updatedUser = { ...data.user, balance: remoteBal, balanceUpdatedAt: serverUpdated };
+                setUser(updatedUser);
+                localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
+                return remoteBal;
+              }
+              return prevBal;
+            });
+          }
         }
       } catch (e) {}
     };
 
-    const interval = setInterval(syncBalanceFromCloud, 1200);
+    // Fast 800ms real-time sync for instant admin updates
+    const interval = setInterval(syncBalanceFromCloud, 800);
 
     const handleStorageChange = (e) => {
       if (e.key === 'luckywin_active_user' && e.newValue) {
@@ -132,6 +148,7 @@ export default function App() {
 
     const handleCustomSync = (e) => {
       if (e.detail !== undefined) {
+        lastLocalBalanceActionTime.current = Date.now();
         setBalance(Number(e.detail));
       }
     };
@@ -147,6 +164,7 @@ export default function App() {
 
   const handleAuthSuccess = (userData) => {
     const withTS = { ...userData, balanceUpdatedAt: Date.now() };
+    lastLocalBalanceActionTime.current = Date.now();
     setUser(withTS);
     setBalance(userData.balance !== undefined ? userData.balance : 0.0);
     localStorage.setItem('luckywin_active_user', JSON.stringify(withTS));
@@ -162,8 +180,9 @@ export default function App() {
 
   const handleBalanceUpdate = (newBalance) => {
     const formatted = parseFloat(Math.max(0, Number(newBalance)).toFixed(2));
-    setBalance(formatted);
     const now = Date.now();
+    lastLocalBalanceActionTime.current = now;
+    setBalance(formatted);
     if (user) {
       const updatedUser = { ...user, balance: formatted, balanceUpdatedAt: now };
       setUser(updatedUser);
