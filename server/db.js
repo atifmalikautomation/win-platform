@@ -6,17 +6,66 @@ const DB_PATH = process.env.VERCEL
   ? path.join('/tmp', 'data.json')
   : path.join(__dirname, 'data.json');
 
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || 'vercel_blob_rw_qhXj3ttyZwbZkgcA_2FxtXpfjdZR4CkC3sNv2WmqVjBID97';
+const BLOB_FILE_NAME = 'skywin-database.json';
 const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0b68e3a7539c1';
+
 let memoryCache = null;
 let lastCloudSync = 0;
 
 // Cloud Sync Helpers
 async function syncWithCloud() {
+  // 1. Primary: Official Vercel Private Blob Storage
+  try {
+    const { get } = require('@vercel/blob');
+    const res = await get(BLOB_FILE_NAME, { access: 'private', token: BLOB_TOKEN });
+    if (res && res.stream) {
+      const text = await new Response(res.stream).text();
+      const json = JSON.parse(text);
+      if (json && Array.isArray(json.users) && json.users.length > 0) {
+        // Merge with existing in-memory users so we never lose a newly created user
+        if (memoryCache && Array.isArray(memoryCache.users)) {
+          memoryCache.users.forEach(memU => {
+            const exists = json.users.some(cloudU => 
+              cloudU.id === memU.id || 
+              (memU.username && cloudU.username && cloudU.username.toLowerCase() === memU.username.toLowerCase()) ||
+              (memU.email && cloudU.email && cloudU.email.toLowerCase() === memU.email.toLowerCase())
+            );
+            if (!exists) {
+              json.users.push(memU);
+            }
+          });
+        }
+        memoryCache = json;
+        lastCloudSync = Date.now();
+        try {
+          fs.writeFileSync(DB_PATH, JSON.stringify(json, null, 2), 'utf8');
+        } catch (e) {}
+        return memoryCache;
+      }
+    }
+  } catch (err) {
+    console.warn('Vercel Blob sync attempt:', err.message);
+  }
+
+  // 2. Secondary redundant cloud backup
   try {
     const res = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
     if (res.ok) {
       const json = await res.json();
       if (json && json.data && Array.isArray(json.data.users)) {
+        if (memoryCache && Array.isArray(memoryCache.users)) {
+          memoryCache.users.forEach(memU => {
+            const exists = json.data.users.some(cloudU => 
+              cloudU.id === memU.id || 
+              (memU.username && cloudU.username && cloudU.username.toLowerCase() === memU.username.toLowerCase()) ||
+              (memU.email && cloudU.email && cloudU.email.toLowerCase() === memU.email.toLowerCase())
+            );
+            if (!exists) {
+              json.data.users.push(memU);
+            }
+          });
+        }
         memoryCache = json.data;
         lastCloudSync = Date.now();
         try {
@@ -26,10 +75,25 @@ async function syncWithCloud() {
       }
     }
   } catch (e) {}
+
   return memoryCache;
 }
 
 async function pushToCloud(data) {
+  // 1. Primary: Save to Vercel Private Blob
+  try {
+    const { put } = require('@vercel/blob');
+    await put(BLOB_FILE_NAME, JSON.stringify(data, null, 2), {
+      access: 'private',
+      token: BLOB_TOKEN,
+      addRandomSuffix: false,
+      allowOverwrite: true
+    });
+  } catch (err) {
+    console.error('Vercel Blob push error:', err.message);
+  }
+
+  // 2. Secondary redundant backup
   try {
     const payload = JSON.stringify({ name: 'skywin_database', data });
     await fetch(CLOUD_DB_URL, {
@@ -37,9 +101,7 @@ async function pushToCloud(data) {
       headers: { 'Content-Type': 'application/json' },
       body: payload
     });
-  } catch (e) {
-    console.error('Cloud push error:', e.message);
-  }
+  } catch (e) {}
 }
 
 // Initialize database structure
@@ -152,28 +214,47 @@ async function writeDB(data) {
 
 // User Helpers
 function findUserById(id) {
+  if (!id) return null;
   const db = readDB();
   return db.users.find(u => u.id === id);
 }
 
 function findUserByUsername(username) {
+  if (!username) return null;
   const db = readDB();
-  return db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+  const clean = username.trim().toLowerCase();
+  return db.users.find(u => (u.username || '').trim().toLowerCase() === clean);
 }
 
 function findUserByEmail(email) {
+  if (!email) return null;
   const db = readDB();
-  return db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  const clean = email.trim().toLowerCase();
+  return db.users.find(u => (u.email || '').trim().toLowerCase() === clean);
+}
+
+function findUserByIdentifier(identifier) {
+  if (!identifier) return null;
+  const db = readDB();
+  const clean = identifier.trim().toLowerCase();
+  return db.users.find(u =>
+    (u.username && u.username.trim().toLowerCase() === clean) ||
+    (u.email && u.email.trim().toLowerCase() === clean)
+  );
 }
 
 async function createUser({ username, email, password, role = 'user', initialBalance = 0.0 }) {
   const db = readDB();
+  const cleanUsername = (username || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanRole = (cleanUsername.toLowerCase() === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') ? 'admin' : role;
+
   const newUser = {
     id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-    username,
-    email,
+    username: cleanUsername,
+    email: cleanEmail,
     passwordHash: bcrypt.hashSync(password, 10),
-    role,
+    role: cleanRole,
     balance: Number(initialBalance),
     bonusBalance: 0.0,
     createdAt: new Date().toISOString(),
@@ -354,6 +435,7 @@ module.exports = {
   findUserById,
   findUserByUsername,
   findUserByEmail,
+  findUserByIdentifier,
   createUser,
   updateUserBalance,
   createTransaction,

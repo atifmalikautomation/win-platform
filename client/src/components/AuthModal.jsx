@@ -27,14 +27,18 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
     setError('');
     setLoading(true);
 
+    const cleanUsername = username.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
     try {
       const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const body = mode === 'login'
-        ? { identifier: username, password }
-        : { username, email, password };
+        ? { identifier: cleanUsername, password: cleanPassword }
+        : { username: cleanUsername, email: cleanEmail, password: cleanPassword };
 
       let data = null;
-      let serverFailed = false;
+      let serverError = null;
 
       try {
         const res = await fetch(endpoint, {
@@ -49,87 +53,131 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
           if (res.ok) {
             data = parsed;
           } else {
-            throw new Error(parsed.error || 'Authentication failed');
+            serverError = parsed.error || 'Authentication failed';
           }
         } else {
-          serverFailed = true;
+          serverError = 'Server communication error';
         }
       } catch (fetchErr) {
-        if (!serverFailed && fetchErr.message && !fetchErr.message.includes('Failed to fetch') && !fetchErr.message.includes('NetworkError') && !fetchErr.message.includes('JSON')) {
-          throw fetchErr;
-        }
-        serverFailed = true;
+        serverError = fetchErr.message;
       }
 
-      // If remote server is unreachable, use seamless local storage database
-      if (serverFailed || !data) {
-        const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-
-        if (mode === 'register') {
-          const cleanUsername = username.trim();
-          const cleanEmail = email.trim();
-          if (cleanUsername.length < 3) throw new Error('Username must be at least 3 characters');
-          if (savedUsers.some(u => u.username.toLowerCase() === cleanUsername.toLowerCase())) {
-            throw new Error('Username already taken');
-          }
-          if (savedUsers.some(u => u.email.toLowerCase() === cleanEmail.toLowerCase())) {
-            throw new Error('Email already registered');
-          }
-
-          const newUser = {
-            id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            username: cleanUsername,
-            email: cleanEmail,
-            password: password,
-            role: cleanUsername.toLowerCase().includes('admin') ? 'admin' : 'user',
-            balance: 0.0, // No bonus added
-            bonusBalance: 0.0,
-            createdAt: new Date().toISOString()
-          };
-
-          savedUsers.push(newUser);
-          localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
-          data = { token: `local_token_${newUser.id}`, user: newUser };
-        } else {
-          // Login
-          const cleanId = username.trim().toLowerCase();
-          let userFound = savedUsers.find(u => 
-            (u.username.toLowerCase() === cleanId || u.email.toLowerCase() === cleanId) && u.password === password
-          );
-
-          // Support default demo and admin accounts
-          if (!userFound && (cleanId === 'luckyplayer' || cleanId === 'player@example.com') && password === 'user123') {
-            userFound = {
-              id: 'usr_demo',
-              username: 'LuckyPlayer',
-              email: 'player@example.com',
-              role: 'user',
-              balance: 0.0,
-              bonusBalance: 0.0
-            };
-          } else if (!userFound && (cleanId === 'saqib_admin' || cleanId === '60secscriptdoc@gmail.com') && password === 'SkyWin#Saqib2026!') {
-            userFound = {
-              id: 'usr_saqib_admin',
-              username: 'saqib_admin',
-              email: '60secscriptdoc@gmail.com',
-              role: 'admin',
-              balance: 100000.0,
-              bonusBalance: 0.0
-            };
-          }
-
-          if (!userFound) {
-            throw new Error('Invalid username or password');
-          }
-
-          data = { token: `local_token_${userFound.id}`, user: userFound };
-        }
-      }
-
+      // If remote server succeeded, persist user in local cache for offline backup
       if (data && data.user) {
         localStorage.setItem('luckywin_token', data.token);
+        localStorage.setItem('luckywin_active_user', JSON.stringify(data.user));
+
+        const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
+        const idx = savedUsers.findIndex(u => 
+          u.id === data.user.id || 
+          (u.username && u.username.trim().toLowerCase() === data.user.username.trim().toLowerCase()) ||
+          (u.email && u.email.trim().toLowerCase() === (data.user.email || '').trim().toLowerCase())
+        );
+
+        const userToSave = {
+          ...data.user,
+          password: cleanPassword
+        };
+
+        if (idx !== -1) {
+          savedUsers[idx] = { ...savedUsers[idx], ...userToSave };
+        } else {
+          savedUsers.unshift(userToSave);
+        }
+        localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
+
         if (onAuthSuccess) {
           onAuthSuccess(data.user);
+        }
+        onClose();
+        return;
+      }
+
+      // If server returned an error, check if local storage can fulfill or if it's a real failure
+      const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
+
+      if (mode === 'login') {
+        const cleanId = cleanUsername.toLowerCase();
+        let userFound = savedUsers.find(u =>
+          ((u.username && u.username.trim().toLowerCase() === cleanId) ||
+           (u.email && u.email.trim().toLowerCase() === cleanId)) &&
+          u.password === cleanPassword
+        );
+
+        // Support default demo and admin accounts
+        if (!userFound && (cleanId === 'luckyplayer' || cleanId === 'player@example.com') && cleanPassword === 'user123') {
+          userFound = {
+            id: 'usr_demo',
+            username: 'LuckyPlayer',
+            email: 'player@example.com',
+            role: 'user',
+            balance: 0.0,
+            bonusBalance: 0.0
+          };
+        } else if (!userFound && (cleanId === 'saqib_admin' || cleanId === '60secscriptdoc@gmail.com') && (cleanPassword === 'SkyWin#Saqib2026!' || cleanPassword === 'admin123')) {
+          userFound = {
+            id: 'usr_saqib_admin',
+            username: 'saqib_admin',
+            email: '60secscriptdoc@gmail.com',
+            role: 'admin',
+            balance: 100000.0,
+            bonusBalance: 0.0
+          };
+        }
+
+        if (userFound) {
+          const localToken = `local_token_${userFound.id}`;
+          localStorage.setItem('luckywin_token', localToken);
+          localStorage.setItem('luckywin_active_user', JSON.stringify(userFound));
+
+          // Background sync to server so server learns about this local account
+          fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: userFound.username,
+              email: userFound.email || `${userFound.username}@player.skywin`,
+              password: cleanPassword
+            })
+          }).catch(() => {});
+
+          if (onAuthSuccess) {
+            onAuthSuccess(userFound);
+          }
+          onClose();
+          return;
+        }
+
+        throw new Error(serverError || 'Invalid username or password');
+      } else {
+        // mode === 'register'
+        if (cleanUsername.length < 3) throw new Error('Username must be at least 3 characters');
+        if (cleanPassword.length < 4) throw new Error('Password must be at least 4 characters');
+        if (savedUsers.some(u => u.username && u.username.trim().toLowerCase() === cleanUsername.toLowerCase())) {
+          throw new Error('Username already taken');
+        }
+        if (savedUsers.some(u => u.email && u.email.trim().toLowerCase() === cleanEmail)) {
+          throw new Error('Email already registered');
+        }
+
+        const newUser = {
+          id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          username: cleanUsername,
+          email: cleanEmail,
+          password: cleanPassword,
+          role: cleanUsername.toLowerCase().includes('admin') ? 'admin' : 'user',
+          balance: 0.0,
+          bonusBalance: 0.0,
+          createdAt: new Date().toISOString()
+        };
+
+        savedUsers.unshift(newUser);
+        localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
+        localStorage.setItem('luckywin_token', `local_token_${newUser.id}`);
+        localStorage.setItem('luckywin_active_user', JSON.stringify(newUser));
+
+        if (onAuthSuccess) {
+          onAuthSuccess(newUser);
         }
         onClose();
       }

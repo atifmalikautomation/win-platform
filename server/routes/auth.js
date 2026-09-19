@@ -42,13 +42,24 @@ async function authenticateToken(req, res, next) {
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const rawUsername = req.body.username || '';
+    const rawEmail = req.body.email || '';
+    const rawPassword = req.body.password || '';
+
+    const username = rawUsername.trim();
+    const email = rawEmail.trim().toLowerCase();
+    const password = rawPassword.trim();
+
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'Username, email, and password are required' });
     }
 
     if (username.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    }
+
+    if (password.length < 4) {
+      return res.status(400).json({ error: 'Password must be at least 4 characters' });
     }
 
     if (db.syncWithCloud) await db.syncWithCloud();
@@ -83,20 +94,23 @@ router.post('/register', async (req, res) => {
 // Login
 router.post('/login', async (req, res) => {
   try {
-    const identifier = req.body.identifier || req.body.username || req.body.email;
-    const { password } = req.body;
-    if (!identifier || !password) {
+    const rawId = req.body.identifier || req.body.username || req.body.email || '';
+    const rawPassword = req.body.password || '';
+
+    const cleanId = rawId.trim().toLowerCase();
+    const password = rawPassword.trim();
+
+    if (!cleanId || !password) {
       return res.status(400).json({ error: 'Please provide username/email and password' });
     }
 
-    let user = db.findUserByUsername(identifier);
-    if (!user) {
-      user = db.findUserByEmail(identifier);
-    }
+    // First search memory cache
+    let user = db.findUserByIdentifier(cleanId);
 
+    // If not in current memory, sync from cloud storage
     if (!user && db.syncWithCloud) {
       await db.syncWithCloud();
-      user = db.findUserByUsername(identifier) || db.findUserByEmail(identifier);
+      user = db.findUserByIdentifier(cleanId);
     }
 
     if (!user) {
@@ -107,13 +121,21 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'This account has been suspended by administration' });
     }
 
-    const cleanUser = (user.username || '').toLowerCase();
-    const cleanEmail = (user.email || '').toLowerCase();
+    const cleanUser = (user.username || '').trim().toLowerCase();
+    const cleanEmail = (user.email || '').trim().toLowerCase();
     const isMasterAdmin = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') &&
       (password === 'SkyWin#Saqib2026!' || password === 'admin123');
     const isDemoUser = (cleanUser === 'luckyplayer' || cleanEmail === 'player@example.com') && password === 'user123';
 
-    const match = isMasterAdmin || isDemoUser || (user.passwordHash && bcrypt.compareSync(password, user.passwordHash));
+    let match = false;
+    if (isMasterAdmin || isDemoUser) {
+      match = true;
+    } else if (user.passwordHash) {
+      match = bcrypt.compareSync(password, user.passwordHash);
+    } else if (user.password) {
+      match = user.password === password;
+    }
+
     if (!match) {
       return res.status(400).json({ error: 'Incorrect password' });
     }

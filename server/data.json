@@ -24,6 +24,17 @@
       "balance": 0,
       "bonusBalance": 0,
       "role": "user"
+    },
+    {
+      "id": "usr_1789769908328_1kuhfj",
+      "username": "pak_gamer_99",
+      "email": "pakistan.player99@gmail.com",
+      "passwordHash": "$2b$10$1UUrrqllwhXDVbh0FRh2ouRLHeE5OsmAxmrmXJ88GxF7QiFjx2s/6",
+      "role": "user",
+      "balance": 0,
+      "bonusBalance": 0,
+      "createdAt": "2026-09-18T22:18:28.490Z",
+      "isBanned": false
     }
   ]
 }
