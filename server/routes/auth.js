@@ -72,7 +72,14 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    const newUser = await db.createUser({ username, email, password, initialBalance: 0.0 });
+    const newUser = await db.createUser({
+      username,
+      email,
+      password,
+      initialBalance: 0.0,
+      authProvider: email.includes('@gmail.com') ? 'google' : 'email',
+      lastLogin: new Date().toISOString()
+    });
     const token = jwt.sign({ id: newUser.id, role: newUser.role }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
@@ -83,7 +90,10 @@ router.post('/register', async (req, res) => {
         email: newUser.email,
         role: newUser.role,
         balance: newUser.balance,
-        bonusBalance: newUser.bonusBalance
+        bonusBalance: newUser.bonusBalance,
+        authProvider: newUser.authProvider,
+        lastLogin: newUser.lastLogin,
+        picture: newUser.picture || ''
       }
     });
   } catch (err) {
@@ -136,6 +146,10 @@ router.post('/login', async (req, res) => {
       match = user.password === password;
     }
 
+    if (!match) {
+      return res.status(400).json({ error: 'Incorrect password' });
+    }
+
     const portal = (req.body.portal || '').trim().toLowerCase();
     const isAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || user.role === 'admin' || cleanUser.includes('admin'));
 
@@ -149,6 +163,22 @@ router.post('/login', async (req, res) => {
     const effectiveRole = (isAdminAccount && portal === 'admin') ? 'admin' : (user.role === 'admin' && portal === 'admin' ? 'admin' : 'user');
     user.role = effectiveRole;
 
+    const nowIso = new Date().toISOString();
+    user.lastLogin = nowIso;
+    if (!user.authProvider) {
+      user.authProvider = (cleanEmail && cleanEmail.includes('@gmail.com')) ? 'google' : 'email';
+    }
+
+    // Persist login timestamp to DB
+    const currentDb = db.readDB();
+    const uIdx = currentDb.users.findIndex(u => u.id === user.id);
+    if (uIdx !== -1) {
+      currentDb.users[uIdx].lastLogin = nowIso;
+      currentDb.users[uIdx].authProvider = user.authProvider;
+      currentDb.users[uIdx].role = effectiveRole;
+      await db.writeDB(currentDb);
+    }
+
     const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
@@ -159,7 +189,10 @@ router.post('/login', async (req, res) => {
         email: user.email,
         role: user.role,
         balance: user.balance,
-        bonusBalance: user.bonusBalance
+        bonusBalance: user.bonusBalance,
+        authProvider: user.authProvider,
+        lastLogin: user.lastLogin,
+        picture: user.picture || ''
       }
     });
   } catch (err) {
@@ -224,6 +257,22 @@ router.post('/google', async (req, res) => {
       const effectiveRole = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanUser.includes('admin')) ? 'admin' : (user.role || 'user');
       user.role = effectiveRole;
 
+      const nowIso = new Date().toISOString();
+      user.lastLogin = nowIso;
+      user.authProvider = 'google';
+      if (picture) user.picture = picture;
+
+      // Update in DB and persist
+      const currentDb = db.readDB();
+      const uIdx = currentDb.users.findIndex(u => u.id === user.id);
+      if (uIdx !== -1) {
+        currentDb.users[uIdx].lastLogin = nowIso;
+        currentDb.users[uIdx].authProvider = 'google';
+        currentDb.users[uIdx].role = effectiveRole;
+        if (picture) currentDb.users[uIdx].picture = picture;
+        await db.writeDB(currentDb);
+      }
+
       const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });
 
       return res.json({
@@ -235,6 +284,8 @@ router.post('/google', async (req, res) => {
           role: user.role,
           balance: user.balance,
           bonusBalance: user.bonusBalance,
+          authProvider: 'google',
+          lastLogin: user.lastLogin,
           picture: picture || user.picture || ''
         }
       });
@@ -265,12 +316,11 @@ router.post('/google', async (req, res) => {
       email: email,
       password: randomPassword,
       role: newUserRole,
-      initialBalance: 0.0 // Strictly PKR 0.0 (NO BONUS)
+      initialBalance: 0.0, // Strictly PKR 0.0 (NO BONUS)
+      authProvider: 'google',
+      picture: picture || '',
+      lastLogin: new Date().toISOString()
     });
-
-    if (picture) {
-      newUser.picture = picture;
-    }
 
     const token = jwt.sign({ id: newUser.id, role: newUser.role }, JWT_SECRET, { expiresIn: '7d' });
 
@@ -283,6 +333,8 @@ router.post('/google', async (req, res) => {
         role: newUser.role,
         balance: newUser.balance,
         bonusBalance: newUser.bonusBalance,
+        authProvider: 'google',
+        lastLogin: newUser.lastLogin,
         picture: picture || ''
       }
     });
@@ -304,7 +356,10 @@ router.get('/me', authenticateToken, async (req, res) => {
       role: freshUser.role,
       balance: freshUser.balance,
       bonusBalance: freshUser.bonusBalance,
-      balanceUpdatedAt: freshUser.balanceUpdatedAt || 0
+      balanceUpdatedAt: freshUser.balanceUpdatedAt || 0,
+      authProvider: freshUser.authProvider || (freshUser.email?.includes('@gmail.com') ? 'google' : 'email'),
+      lastLogin: freshUser.lastLogin || freshUser.createdAt || null,
+      picture: freshUser.picture || ''
     }
   });
 });

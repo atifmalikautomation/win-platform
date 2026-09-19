@@ -1,5 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Sliders, CheckCircle, RefreshCw, RotateCcw, Eye, X, Flame, Bomb, Target, AlertOctagon, ShieldAlert, Sparkles, Search, Users, Calendar, UserCheck } from 'lucide-react';
+import { Sliders, CheckCircle, RefreshCw, RotateCcw, Eye, X, Flame, Bomb, Target, AlertOctagon, ShieldAlert, Sparkles, Search, Users, Calendar, UserCheck, Copy, Check, Mail, Clock, ShieldCheck, AtSign } from 'lucide-react';
+
+const GoogleGIcon = () => (
+  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+    <path
+      fill="#4285F4"
+      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+    />
+    <path
+      fill="#34A853"
+      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+    />
+    <path
+      fill="#FBBC05"
+      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+    />
+    <path
+      fill="#EA4335"
+      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+    />
+  </svg>
+);
 
 export default function AdminDashboard({ user, onBalanceUpdate }) {
   const [stats, setStats] = useState(null);
@@ -13,6 +34,8 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
   const [transactions, setTransactions] = useState([]);
   const [usersList, setUsersList] = useState([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userFilterTab, setUserFilterTab] = useState('all'); // 'all' | 'gmail' | 'email' | 'active' | 'banned'
+  const [copiedEmailId, setCopiedEmailId] = useState(null);
   const [activeTab, setActiveTab] = useState('cashier'); // 'cashier' | 'game_controls' | 'settings' | 'users'
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -93,22 +116,33 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
       localUsers.forEach(lu => {
         const uEmail = (lu.email || '').toLowerCase();
         const uName = (lu.username || '').toLowerCase();
-        const exists = combinedUsers.some(u => 
+        const matchIdx = combinedUsers.findIndex(u => 
           u.id === lu.id || 
           (uEmail && u.email && u.email.toLowerCase() === uEmail) ||
           (uName && u.username && u.username.toLowerCase() === uName)
         );
-        if (!exists) {
+        if (matchIdx === -1) {
           combinedUsers.push({
             id: lu.id,
             username: lu.username,
-            email: lu.email,
+            email: lu.email || '',
             role: lu.role || 'user',
             balance: lu.balance !== undefined ? lu.balance : 0.0,
             bonusBalance: lu.bonusBalance || 0.0,
             createdAt: lu.createdAt || new Date().toISOString(),
+            lastLogin: lu.lastLogin || lu.createdAt || new Date().toISOString(),
+            authProvider: lu.authProvider || lu.provider || (uEmail.includes('@gmail.com') ? 'google' : 'email'),
+            picture: lu.picture || '',
             isBanned: !!lu.isBanned
           });
+        } else {
+          const existing = combinedUsers[matchIdx];
+          if (!existing.email && lu.email) existing.email = lu.email;
+          if (!existing.lastLogin && lu.lastLogin) existing.lastLogin = lu.lastLogin;
+          if (!existing.authProvider && (lu.authProvider || lu.provider)) {
+            existing.authProvider = lu.authProvider || lu.provider;
+          }
+          if (!existing.picture && lu.picture) existing.picture = lu.picture;
         }
       });
 
@@ -123,6 +157,8 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
             balance: 100000.0,
             bonusBalance: 0.0,
             createdAt: '2026-09-18T00:00:00.000Z',
+            lastLogin: new Date().toISOString(),
+            authProvider: 'google',
             isBanned: false
           },
           {
@@ -133,6 +169,8 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
             balance: 0.0,
             bonusBalance: 0.0,
             createdAt: '2026-09-18T00:00:00.000Z',
+            lastLogin: new Date().toISOString(),
+            authProvider: 'email',
             isBanned: false
           }
         ];
@@ -1026,33 +1064,100 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
       {/* TAB 3: USER LEDGER & BALANCES */}
       {activeTab === 'users' && (() => {
         const query = userSearchQuery.trim().toLowerCase();
+
+        const isGmailUser = (u) => {
+          const email = (u.email || '').toLowerCase();
+          return email.includes('@gmail.com') || u.authProvider === 'google';
+        };
+
         const filteredUsers = usersList.filter(u => {
+          // Tab filter
+          if (userFilterTab === 'gmail' && !isGmailUser(u)) return false;
+          if (userFilterTab === 'email' && isGmailUser(u)) return false;
+          if (userFilterTab === 'active' && u.isBanned) return false;
+          if (userFilterTab === 'banned' && !u.isBanned) return false;
+
+          // Search query
           if (!query) return true;
           return (u.username && u.username.toLowerCase().includes(query)) ||
-                 (u.email && u.email.toLowerCase().includes(query));
+                 (u.email && u.email.toLowerCase().includes(query)) ||
+                 (u.id && u.id.toLowerCase().includes(query));
         });
 
+        const totalCount = usersList.length;
+        const gmailCount = usersList.filter(isGmailUser).length;
+        const emailCount = usersList.filter(u => !isGmailUser(u)).length;
         const activeCount = usersList.filter(u => !u.isBanned).length;
         const bannedCount = usersList.filter(u => u.isBanned).length;
+        const totalUserBalances = usersList.reduce((sum, u) => sum + (Number(u.balance) || 0), 0);
+
+        const formatDate = (isoStr) => {
+          if (!isoStr) return '—';
+          try {
+            const d = new Date(isoStr);
+            if (isNaN(d.getTime())) return '—';
+            return d.toLocaleString('en-PK', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            });
+          } catch (e) {
+            return '—';
+          }
+        };
+
+        const formatLastLogin = (isoStr) => {
+          if (!isoStr) return { text: 'Never / No login recorded', isRecent: false };
+          try {
+            const d = new Date(isoStr);
+            if (isNaN(d.getTime())) return { text: '—', isRecent: false };
+            const diffMs = Date.now() - d.getTime();
+            const diffHours = diffMs / (1000 * 60 * 60);
+            const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
+            const dateStr = d.toLocaleDateString('en-PK', { day: 'numeric', month: 'short' });
+            if (diffHours < 1) {
+              const mins = Math.max(1, Math.floor(diffMs / (1000 * 60)));
+              return { text: `${mins}m ago (${timeStr})`, isRecent: true };
+            }
+            if (diffHours < 24) {
+              return { text: `Today at ${timeStr}`, isRecent: true };
+            }
+            return { text: `${dateStr}, ${timeStr}`, isRecent: false };
+          } catch (e) {
+            return { text: '—', isRecent: false };
+          }
+        };
+
+        const handleCopyEmail = (email, id) => {
+          if (!email) return;
+          try {
+            navigator.clipboard?.writeText(email);
+          } catch (e) {}
+          setCopiedEmailId(id);
+          setTimeout(() => setCopiedEmailId(null), 2000);
+        };
 
         return (
-          <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 shadow-xl space-y-4">
-            {/* Header with Search and Stats */}
+          <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 shadow-xl space-y-5">
+            {/* Header with Title & Stats */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
               <div>
                 <h2 className="text-base font-black text-white flex items-center gap-2">
                   <Users className="w-5 h-5 text-amber-400" />
-                  Registered Players Ledger
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">
-                    {usersList.length} Total
+                  Registered Players & Gmail Ledger
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {totalCount} Total Accounts
                   </span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  View all registered accounts, emails/gmails, signup timestamps, and manage balances
+                  Real-time database of every user who registered or logged in with Gmail, standard email, or Google 1-Click
                 </p>
               </div>
 
-              {/* Search Bar & Quick Stats */}
+              {/* Search Bar & Sync Button */}
               <div className="flex items-center gap-2.5 flex-1 max-w-md">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1060,8 +1165,8 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                     type="text"
                     value={userSearchQuery}
                     onChange={(e) => setUserSearchQuery(e.target.value)}
-                    placeholder="Search by username or gmail..."
-                    className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
+                    placeholder="Search by Gmail, username, or ID..."
+                    className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-9 pr-8 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
                   />
                   {userSearchQuery && (
                     <button
@@ -1076,24 +1181,65 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                 <button
                   onClick={fetchAdminData}
                   title="Sync and refresh latest player signups"
-                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors"
+                  className="px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-bold"
                 >
-                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  Sync
                 </button>
               </div>
             </div>
 
-            {/* Quick Status Chips */}
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400 font-semibold">Overview:</span>
-              <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 font-bold text-[11px]">
-                {activeCount} Active Accounts
-              </span>
-              {bannedCount > 0 && (
-                <span className="px-2 py-0.5 rounded-lg bg-rose-500/15 text-rose-400 font-bold text-[11px]">
-                  {bannedCount} Banned
+            {/* Quick Summary Metric Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-[#090c13] border border-slate-800 p-3.5 rounded-2xl">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Accounts</span>
+                <span className="text-lg font-black text-white font-mono mt-0.5 block">{totalCount}</span>
+                <span className="text-[10px] text-slate-500 mt-0.5 block">All platform records</span>
+              </div>
+
+              <div className="bg-[#090c13] border border-blue-500/20 p-3.5 rounded-2xl">
+                <span className="text-[10px] text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                  <GoogleGIcon /> Google / Gmail
                 </span>
-              )}
+                <span className="text-lg font-black text-blue-300 font-mono mt-0.5 block">{gmailCount}</span>
+                <span className="text-[10px] text-blue-400/60 mt-0.5 block">Verified Google users</span>
+              </div>
+
+              <div className="bg-[#090c13] border border-emerald-500/20 p-3.5 rounded-2xl">
+                <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Active Players</span>
+                <span className="text-lg font-black text-emerald-300 font-mono mt-0.5 block">{activeCount}</span>
+                <span className="text-[10px] text-emerald-400/60 mt-0.5 block">Permitted to bet & deposit</span>
+              </div>
+
+              <div className="bg-[#090c13] border border-amber-500/20 p-3.5 rounded-2xl">
+                <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">Total Platform Balances</span>
+                <span className="text-lg font-black text-amber-300 font-mono mt-0.5 block">PKR {totalUserBalances.toLocaleString()}</span>
+                <span className="text-[10px] text-amber-400/60 mt-0.5 block">Combined player funds</span>
+              </div>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1 border-b border-slate-800/80">
+              <span className="text-xs text-slate-400 font-semibold mr-1">Filter Accounts:</span>
+              {[
+                { id: 'all', label: `All Accounts (${totalCount})` },
+                { id: 'gmail', label: `Google / Gmail (${gmailCount})` },
+                { id: 'email', label: `Email & Password (${emailCount})` },
+                { id: 'active', label: `Active (${activeCount})` },
+                { id: 'banned', label: `Banned (${bannedCount})` }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setUserFilterTab(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    userFilterTab === tab.id
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-900/90 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             {/* Players Table */}
@@ -1101,22 +1247,25 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="pb-3">Player / Username</th>
-                    <th className="pb-3">Email / Gmail</th>
-                    <th className="pb-3">Signed Up At</th>
-                    <th className="pb-3">Role</th>
-                    <th className="pb-3">Main Balance</th>
-                    <th className="pb-3">Status</th>
-                    <th className="pb-3 text-right">Actions</th>
+                    <th className="pb-3 pl-1">Player & ID</th>
+                    <th className="pb-3">Gmail / Account Info</th>
+                    <th className="pb-3">Auth Method</th>
+                    <th className="pb-3">Registration Date</th>
+                    <th className="pb-3">Last Login / Active</th>
+                    <th className="pb-3">Role & Status</th>
+                    <th className="pb-3">Wallet Balance</th>
+                    <th className="pb-3 text-right pr-1">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="py-12 text-center text-slate-400">
+                      <td colSpan="8" className="py-12 text-center text-slate-400">
                         <Users className="w-8 h-8 text-slate-600 mx-auto mb-2" />
                         <p className="font-bold text-slate-300">
-                          {userSearchQuery ? `No players found matching "${userSearchQuery}"` : 'No registered players found.'}
+                          {userSearchQuery
+                            ? `No accounts found matching "${userSearchQuery}" in selected filter.`
+                            : 'No user accounts found in this category.'}
                         </p>
                         {userSearchQuery && (
                           <button
@@ -1131,54 +1280,164 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                   ) : (
                     filteredUsers.map(u => {
                       const isNew = u.createdAt && (Date.now() - new Date(u.createdAt).getTime() < 1000 * 60 * 60 * 48);
-                      const formattedDate = u.createdAt 
-                        ? new Date(u.createdAt).toLocaleString('en-PK', { dateStyle: 'short', timeStyle: 'short' })
-                        : 'Recent';
+                      const isGoogle = isGmailUser(u);
+                      const regDateStr = formatDate(u.createdAt);
+                      const loginMeta = formatLastLogin(u.lastLogin);
+                      const isCopied = copiedEmailId === u.id;
+
+                      // Generate initials for avatar
+                      const initials = (u.username || u.email || 'U').slice(0, 2).toUpperCase();
 
                       return (
-                        <tr key={u.id} className="hover:bg-slate-900/40 transition-colors">
-                          <td className="py-3.5 font-bold text-white flex items-center gap-2">
-                            <span>{u.username}</span>
-                            {isNew && (
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] font-black tracking-wider uppercase">
-                                NEW
+                        <tr key={u.id} className="hover:bg-slate-900/40 transition-colors group">
+                          {/* 1. Player & ID */}
+                          <td className="py-3.5 pl-1">
+                            <div className="flex items-center gap-2.5">
+                              {u.picture ? (
+                                <img
+                                  src={u.picture}
+                                  alt={u.username}
+                                  className="w-8 h-8 rounded-full border border-slate-700 object-cover shrink-0"
+                                />
+                              ) : (
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
+                                  isGoogle ? 'bg-blue-600/30 text-blue-400 border border-blue-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                }`}>
+                                  {initials}
+                                </div>
+                              )}
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white leading-tight">{u.username}</span>
+                                  {isNew && (
+                                    <span className="px-1 py-0.2 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[8px] font-black tracking-wider uppercase">
+                                      NEW
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-mono text-[10px] text-slate-500 block leading-tight">
+                                  {u.id}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* 2. Gmail / Account Info */}
+                          <td className="py-3.5">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5">
+                                {isGoogle ? <GoogleGIcon /> : <Mail className="w-3.5 h-3.5 text-slate-400" />}
+                                <span className={`font-mono text-xs font-bold ${
+                                  isGoogle ? 'text-white' : 'text-slate-300'
+                                }`}>
+                                  {u.email || <span className="text-slate-600 italic">No email provided</span>}
+                                </span>
+
+                                {u.email && (
+                                  <button
+                                    onClick={() => handleCopyEmail(u.email, u.id)}
+                                    title="Copy Gmail Address"
+                                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors ml-1"
+                                  >
+                                    {isCopied ? (
+                                      <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-0.5">
+                                        <Check className="w-3 h-3" /> Copied
+                                      </span>
+                                    ) : (
+                                      <Copy className="w-3 h-3" />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                  isGoogle
+                                    ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}>
+                                  {isGoogle ? 'Google Account' : 'Standard Email'}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* 3. Auth Method */}
+                          <td className="py-3.5">
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold ${
+                              isGoogle
+                                ? 'bg-blue-600/15 border border-blue-500/30 text-blue-300'
+                                : 'bg-slate-800/80 border border-slate-700 text-slate-300'
+                            }`}>
+                              {isGoogle ? <GoogleGIcon /> : <Mail className="w-3 h-3 text-slate-400" />}
+                              {isGoogle ? 'Google 1-Click' : 'Password Login'}
+                            </span>
+                          </td>
+
+                          {/* 4. Registration Date */}
+                          <td className="py-3.5 text-slate-300 text-[11px] font-mono whitespace-nowrap">
+                            <div className="flex items-center gap-1 text-slate-400 text-[10px] mb-0.5">
+                              <Calendar className="w-3 h-3" /> Signed Up
+                            </div>
+                            <span>{regDateStr}</span>
+                          </td>
+
+                          {/* 5. Last Login / Active */}
+                          <td className="py-3.5 text-[11px] font-mono whitespace-nowrap">
+                            <div className="flex items-center gap-1 text-slate-400 text-[10px] mb-0.5">
+                              <Clock className="w-3 h-3" /> Last Active
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {loginMeta.isRecent && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                              )}
+                              <span className={loginMeta.isRecent ? 'text-emerald-300 font-bold' : 'text-slate-300'}>
+                                {loginMeta.text}
                               </span>
-                            )}
+                            </div>
                           </td>
-                          <td className="py-3.5 text-slate-300 font-mono text-[11px]">
-                            {u.email || <span className="text-slate-600 italic">No email</span>}
-                          </td>
-                          <td className="py-3.5 text-slate-400 text-[11px]">
-                            {formattedDate}
-                          </td>
+
+                          {/* 6. Role & Status */}
                           <td className="py-3.5">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                              u.role === 'admin' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-slate-800 text-slate-400'
-                            }`}>
-                              {u.role}
-                            </span>
+                            <div className="space-y-1">
+                              <div>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                  u.role === 'admin'
+                                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}>
+                                  {u.role === 'admin' ? 'SUPER ADMIN' : 'PLAYER'}
+                                </span>
+                              </div>
+                              <div>
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                  u.isBanned
+                                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                }`}>
+                                  {u.isBanned ? 'BANNED' : 'ACTIVE'}
+                                </span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="py-3.5 font-black font-mono text-emerald-400">
-                            PKR {(u.balance || 0).toLocaleString()}
+
+                          {/* 7. Wallet Balance */}
+                          <td className="py-3.5 font-black font-mono text-emerald-400 text-xs whitespace-nowrap">
+                            PKR {(Number(u.balance) || 0).toLocaleString()}
                           </td>
-                          <td className="py-3.5">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                              u.isBanned ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            }`}>
-                              {u.isBanned ? 'BANNED' : 'ACTIVE'}
-                            </span>
-                          </td>
-                          <td className="py-3.5 text-right space-x-2">
+
+                          {/* 8. Actions */}
+                          <td className="py-3.5 text-right pr-1 space-x-1.5 whitespace-nowrap">
                             <button
                               onClick={() => { setSelectedUser(u); setAdjustAmount(500); }}
-                              className="px-2.5 py-1 rounded bg-blue-600/80 hover:bg-blue-600 text-white font-bold text-[11px] transition-colors"
+                              className="px-2.5 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white font-bold text-[11px] transition-colors shadow"
                             >
                               Adjust Balance
                             </button>
                             {u.role !== 'admin' && (
                               <button
                                 onClick={() => handleToggleBan(u.id, u.isBanned)}
-                                className={`px-2.5 py-1 rounded font-bold text-[11px] transition-colors ${
+                                className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] transition-colors shadow ${
                                   u.isBanned ? 'bg-emerald-600/80 hover:bg-emerald-600 text-white' : 'bg-rose-600/80 hover:bg-rose-600 text-white'
                                 }`}
                               >

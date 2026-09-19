@@ -68,17 +68,23 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
   const saveUserSession = (data, userPassword = '') => {
     if (!data || !data.user) return;
     localStorage.setItem('luckywin_token', data.token);
-    localStorage.setItem('luckywin_active_user', JSON.stringify(data.user));
+    const nowIso = new Date().toISOString();
+    const userWithMeta = {
+      ...data.user,
+      lastLogin: data.user.lastLogin || nowIso,
+      authProvider: data.user.authProvider || (data.user.email?.includes('@gmail.com') ? 'google' : 'email')
+    };
+    localStorage.setItem('luckywin_active_user', JSON.stringify(userWithMeta));
 
     const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
     const idx = savedUsers.findIndex(u =>
-      u.id === data.user.id ||
-      (u.username && u.username.trim().toLowerCase() === data.user.username.trim().toLowerCase()) ||
-      (u.email && u.email.trim().toLowerCase() === (data.user.email || '').trim().toLowerCase())
+      u.id === userWithMeta.id ||
+      (u.username && u.username.trim().toLowerCase() === userWithMeta.username.trim().toLowerCase()) ||
+      (u.email && u.email.trim().toLowerCase() === (userWithMeta.email || '').trim().toLowerCase())
     );
 
     const userToSave = {
-      ...data.user,
+      ...userWithMeta,
       ...(userPassword ? { password: userPassword } : {})
     };
 
@@ -90,7 +96,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
     localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
 
     if (onAuthSuccess) {
-      onAuthSuccess(data.user);
+      onAuthSuccess(userWithMeta);
     }
     onClose();
   };
@@ -168,6 +174,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
       const baseName = cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
       const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
       let localFound = savedUsers.find(u => u.email && u.email.toLowerCase() === cleanEmail);
+      const nowIso = new Date().toISOString();
       if (!localFound) {
         localFound = {
           id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -176,12 +183,17 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
           role: (cleanEmail === '60secscriptdoc@gmail.com' || baseName === 'saqib_admin') ? 'admin' : 'user',
           balance: 0.0,
           bonusBalance: 0.0,
+          authProvider: 'google',
           provider: 'google',
-          createdAt: new Date().toISOString()
+          createdAt: nowIso,
+          lastLogin: nowIso
         };
         savedUsers.unshift(localFound);
-        localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
+      } else {
+        localFound.lastLogin = nowIso;
+        localFound.authProvider = 'google';
       }
+      localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
       saveUserSession({ token: `local_token_${localFound.id}`, user: localFound });
     } finally {
       setLoading(false);
@@ -309,6 +321,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
           throw new Error('Email already registered');
         }
 
+        const nowIso = new Date().toISOString();
         const newUser = {
           id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
           username: cleanUsername,
@@ -316,7 +329,9 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
           role: cleanUsername.toLowerCase().includes('admin') ? 'admin' : 'user',
           balance: 0.0,
           bonusBalance: 0.0,
-          createdAt: new Date().toISOString()
+          authProvider: cleanEmail.includes('@gmail.com') ? 'google' : 'email',
+          createdAt: nowIso,
+          lastLogin: nowIso
         };
 
         saveUserSession({ token: `local_token_${newUser.id}`, user: newUser }, cleanPassword);

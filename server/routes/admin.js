@@ -80,12 +80,15 @@ router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   const safeUsers = currentDb.users.map(u => ({
     id: u.id,
     username: u.username,
-    email: u.email,
+    email: u.email || '',
     role: u.role,
     balance: u.balance,
     bonusBalance: u.bonusBalance,
     createdAt: u.createdAt,
-    isBanned: u.isBanned
+    lastLogin: u.lastLogin || u.createdAt || null,
+    authProvider: u.authProvider || (u.email && u.email.toLowerCase().includes('@gmail.com') ? 'google' : 'email'),
+    picture: u.picture || '',
+    isBanned: !!u.isBanned
   }));
   res.json({ users: safeUsers });
 });
@@ -97,16 +100,16 @@ router.post('/sync-users', authenticateToken, requireAdmin, async (req, res) => 
     if (db.syncWithCloud) await db.syncWithCloud();
     if (Array.isArray(users)) {
       const currentDb = db.readDB();
-      let added = 0;
+      let modified = 0;
       users.forEach(u => {
         const usernameClean = (u.username || '').toLowerCase();
         const emailClean = (u.email || '').toLowerCase();
-        const exists = currentDb.users.some(existing => 
+        const existsIdx = currentDb.users.findIndex(existing => 
           existing.id === u.id || 
           (emailClean && existing.email && existing.email.toLowerCase() === emailClean) || 
           (usernameClean && existing.username && existing.username.toLowerCase() === usernameClean)
         );
-        if (!exists && (usernameClean || emailClean)) {
+        if (existsIdx === -1 && (usernameClean || emailClean)) {
           currentDb.users.push({
             id: u.id || `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
             username: u.username,
@@ -116,12 +119,35 @@ router.post('/sync-users', authenticateToken, requireAdmin, async (req, res) => 
             balance: Number(u.balance || 0),
             bonusBalance: Number(u.bonusBalance || 0),
             createdAt: u.createdAt || new Date().toISOString(),
+            lastLogin: u.lastLogin || u.createdAt || new Date().toISOString(),
+            authProvider: u.authProvider || u.provider || (emailClean.includes('@gmail.com') ? 'google' : 'email'),
+            picture: u.picture || '',
             isBanned: !!u.isBanned
           });
-          added++;
+          modified++;
+        } else if (existsIdx !== -1) {
+          const existing = currentDb.users[existsIdx];
+          let updated = false;
+          if (!existing.email && u.email) {
+            existing.email = u.email;
+            updated = true;
+          }
+          if (u.lastLogin && (!existing.lastLogin || new Date(u.lastLogin) > new Date(existing.lastLogin))) {
+            existing.lastLogin = u.lastLogin;
+            updated = true;
+          }
+          if (!existing.authProvider && (u.authProvider || u.provider)) {
+            existing.authProvider = u.authProvider || u.provider;
+            updated = true;
+          }
+          if (!existing.picture && u.picture) {
+            existing.picture = u.picture;
+            updated = true;
+          }
+          if (updated) modified++;
         }
       });
-      if (added > 0) {
+      if (modified > 0) {
         await db.writeDB(currentDb);
       }
     }
@@ -129,12 +155,15 @@ router.post('/sync-users', authenticateToken, requireAdmin, async (req, res) => 
     const safeUsers = currentDb.users.map(u => ({
       id: u.id,
       username: u.username,
-      email: u.email,
+      email: u.email || '',
       role: u.role,
       balance: u.balance,
       bonusBalance: u.bonusBalance,
       createdAt: u.createdAt,
-      isBanned: u.isBanned
+      lastLogin: u.lastLogin || u.createdAt || null,
+      authProvider: u.authProvider || (u.email && u.email.toLowerCase().includes('@gmail.com') ? 'google' : 'email'),
+      picture: u.picture || '',
+      isBanned: !!u.isBanned
     }));
     res.json({ message: 'Users synced successfully', users: safeUsers });
   } catch (err) {

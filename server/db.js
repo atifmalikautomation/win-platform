@@ -40,6 +40,20 @@ function smartMergeUserData(localDb, remoteDb) {
         existing.balanceUpdatedAt = localU.balanceUpdatedAt;
         existing.version = localU.version || existing.version;
       }
+      // Merge email if missing in remote
+      if (!existing.email && localU.email) {
+        existing.email = localU.email;
+      }
+      // Merge lastLogin if local is more recent
+      if (localU.lastLogin && (!existing.lastLogin || new Date(localU.lastLogin) > new Date(existing.lastLogin))) {
+        existing.lastLogin = localU.lastLogin;
+      }
+      if (localU.authProvider) {
+        existing.authProvider = localU.authProvider;
+      }
+      if (localU.picture && !existing.picture) {
+        existing.picture = localU.picture;
+      }
       userMap.set(localU.id, existing);
     }
   });
@@ -264,11 +278,12 @@ function findUserByIdentifier(identifier) {
   );
 }
 
-async function createUser({ username, email, password, role = 'user', initialBalance = 0.0 }) {
+async function createUser({ username, email, password, role = 'user', initialBalance = 0.0, authProvider = 'email', picture = '', lastLogin = null }) {
   const db = readDB();
   const cleanUsername = (username || '').trim();
   const cleanEmail = (email || '').trim().toLowerCase();
   const cleanRole = (cleanUsername.toLowerCase() === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') ? 'admin' : role;
+  const nowIso = new Date().toISOString();
 
   const newUser = {
     id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -280,7 +295,10 @@ async function createUser({ username, email, password, role = 'user', initialBal
     bonusBalance: 0.0,
     balanceUpdatedAt: Date.now(),
     version: 1,
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso,
+    lastLogin: lastLogin || nowIso,
+    authProvider: authProvider || (cleanEmail.includes('@gmail.com') ? 'google' : 'email'),
+    picture: picture || '',
     isBanned: false
   };
   db.users.push(newUser);
