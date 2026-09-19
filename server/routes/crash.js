@@ -97,6 +97,12 @@ function getOrUpdateLiveRound() {
       };
     } else {
       while (now >= currentRound.nextRoundStartTime) {
+        // Record the previous completed round in history if not already recorded
+        if (currentRound.crashedAt && (!roundHistory.includes(currentRound.crashedAt) || roundHistory[0] !== currentRound.crashedAt)) {
+          roundHistory.unshift(currentRound.crashedAt);
+          if (roundHistory.length > 20) roundHistory.pop();
+        }
+
         currentRound.roundId = (currentRound.roundId || 1000) + 1;
         currentRound.startTime = currentRound.nextRoundStartTime;
         currentRound.flightStartTime = currentRound.startTime + 5000;
@@ -109,10 +115,7 @@ function getOrUpdateLiveRound() {
         currentRound.crashTime = currentRound.flightStartTime + getFlightDurationMs(mult);
         currentRound.nextRoundStartTime = currentRound.crashTime + 3500;
         currentRound.crashNowHandled = 0;
-        if (!roundHistory.includes(mult) || roundHistory[0] !== mult) {
-          roundHistory.unshift(mult);
-          if (roundHistory.length > 20) roundHistory.pop();
-        }
+        // NOTE: mult is NOT added to history here! It must only appear after the round crashes!
       }
     }
     settings.activeCrashRound = currentRound;
@@ -131,17 +134,25 @@ function getOrUpdateLiveRound() {
     currentRound.multiplier = Math.min(currentRound.crashedAt, curM);
     currentRound.countdown = 0;
   } else {
+    // Round has crashed!
     currentRound.state = 'CRASHED';
     currentRound.multiplier = currentRound.crashedAt;
     currentRound.countdown = 0;
+    // Add to history ONLY when actually crashed
     if (!roundHistory.includes(currentRound.crashedAt) || roundHistory[0] !== currentRound.crashedAt) {
       roundHistory.unshift(currentRound.crashedAt);
       if (roundHistory.length > 20) roundHistory.pop();
     }
   }
 
+  // Ensure history NEVER leaks the active round before it actually crashes
+  let safeHistory = roundHistory;
+  if (currentRound.state !== 'CRASHED' && roundHistory.length > 0 && roundHistory[0] === currentRound.crashedAt) {
+    safeHistory = roundHistory.slice(1);
+  }
+
   currentRound.serverTime = now;
-  currentRound.history = roundHistory.slice(0, 12);
+  currentRound.history = safeHistory.slice(0, 12);
   currentRound.onlinePlayers = 1820 + (currentRound.roundId % 75);
   return currentRound;
 }

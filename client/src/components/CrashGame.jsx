@@ -271,7 +271,11 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         liveRoundRef.current = data;
 
         if (data.history && Array.isArray(data.history)) {
-          setHistory(data.history);
+          // Ensure history strip only contains past completed rounds, never the active flight
+          const safeH = data.state === 'CRASHED' 
+            ? data.history 
+            : data.history.filter(h => h !== data.crashedAt);
+          setHistory(safeH);
         }
         if (data.onlinePlayers) {
           setOnlinePlayers(data.onlinePlayers);
@@ -391,7 +395,8 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
           setMultiplier(crashVal);
           flewAwayPos.current.isFlyingOff = true;
           soundFx.playCrash();
-          setHistory(prev => [crashVal, ...prev.filter(h => h !== crashVal).slice(0, 11)]);
+          // Add the crash multiplier to the top history bar at the exact moment of crash
+          setHistory(prev => (prev.length > 0 && prev[0] === crashVal ? prev : [crashVal, ...prev.slice(0, 11)]));
         }
 
         // When round cycle completes, immediately poll for the fresh round state
