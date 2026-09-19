@@ -209,9 +209,11 @@ router.post('/bet', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Minimum bet is PKR 10' });
     }
 
-    if (db.syncWithCloud) await db.syncWithCloud();
-
-    const user = db.findUserById(req.user.id);
+    let user = db.findUserById(req.user.id);
+    if (!user && db.syncWithCloud) {
+      await db.syncWithCloud(true);
+      user = db.findUserById(req.user.id);
+    }
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -279,8 +281,6 @@ router.post('/cashout', authenticateToken, async (req, res) => {
     }
 
     const payout = parseFloat((betAmount * numMultiplier).toFixed(2));
-
-    if (db.syncWithCloud) await db.syncWithCloud();
 
     // Atomically credit balance
     const newBalance = await db.updateUserBalance(req.user.id, payout);

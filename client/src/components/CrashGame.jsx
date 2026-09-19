@@ -72,6 +72,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
 
   // Aviator Flew Away Fly-Off Animation
   const flewAwayPos = useRef({ x: 0, y: 0, isFlyingOff: false });
+  const handleCashoutRef = useRef(null);
 
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -360,12 +361,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         // Auto Cashout for Bet 1
         setBet1(prev => {
           if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && cappedM >= prev.autoCashout) {
-            const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
-            const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
-            onBalanceUpdateRef.current(newBal);
-            soundFx.playCashout();
-            confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
-            return { ...prev, hasCashedOut: true, cashoutPayout: payout, cashoutMultiplier: prev.autoCashout };
+            if (handleCashoutRef.current) handleCashoutRef.current(1, prev.autoCashout);
           }
           return prev;
         });
@@ -373,12 +369,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
         // Auto Cashout for Bet 2
         setBet2(prev => {
           if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && cappedM >= prev.autoCashout) {
-            const payout = parseFloat((prev.placedBet.amount * prev.autoCashout).toFixed(2));
-            const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
-            onBalanceUpdateRef.current(newBal);
-            soundFx.playCashout();
-            confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
-            return { ...prev, hasCashedOut: true, cashoutPayout: payout, cashoutMultiplier: prev.autoCashout };
+            if (handleCashoutRef.current) handleCashoutRef.current(2, prev.autoCashout);
           }
           return prev;
         });
@@ -876,12 +867,12 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     }
   };
 
-  const handleCashout = (panelNum) => {
+  const handleCashout = (panelNum, explicitMultiplier) => {
     const panel = panelNum === 1 ? bet1 : bet2;
     const setPanel = panelNum === 1 ? setBet1 : setBet2;
     if (!panel.placedBet || panel.hasCashedOut) return;
 
-    const currentMultiplier = smoothMultiplierRef.current || multiplier;
+    const currentMultiplier = explicitMultiplier || smoothMultiplierRef.current || multiplier;
     const payout = parseFloat((panel.placedBet.amount * currentMultiplier).toFixed(2));
     const newBal = parseFloat((balanceRef.current + payout).toFixed(2));
     onBalanceUpdateRef.current(newBal);
@@ -912,7 +903,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       });
     } else {
       const token = localStorage.getItem('luckywin_token');
-      if (token) {
+      if (token && panel.placedBet?.id) {
         fetch('/api/crash/cashout', {
           method: 'POST',
           headers: {
@@ -935,6 +926,8 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
       }
     }
   };
+
+  handleCashoutRef.current = handleCashout;
 
   const maskName = (name) => {
     if (!name || name.length <= 4) return name;

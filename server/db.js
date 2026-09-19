@@ -13,11 +13,52 @@ const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0b6
 let memoryCache = null;
 let lastCloudSync = 0;
 
-// Cloud Sync Helpers
-async function syncWithCloud() {
+// Cloud Sync Helpers with Timestamp & Version Monotonicity
+function smartMergeUserData(localDb, remoteDb) {
+  if (!remoteDb || !Array.isArray(remoteDb.users)) return localDb || readDB();
+  if (!localDb || !Array.isArray(localDb.users) || localDb.users.length === 0) return remoteDb;
+
+  const userMap = new Map();
+
+  // 1. Populate map with incoming cloud users
+  remoteDb.users.forEach(remoteU => {
+    userMap.set(remoteU.id, { ...remoteU });
+  });
+
+  // 2. Merge with local memory users (Local balance wins if updated more recently)
+  localDb.users.forEach(localU => {
+    const existing = userMap.get(localU.id);
+    if (!existing) {
+      userMap.set(localU.id, localU);
+    } else {
+      const localTS = localU.balanceUpdatedAt || 0;
+      const remoteTS = existing.balanceUpdatedAt || 0;
+      // If local user has a newer or equal balance update, keep local balance!
+      if (localTS >= remoteTS) {
+        existing.balance = localU.balance;
+        existing.bonusBalance = localU.bonusBalance !== undefined ? localU.bonusBalance : existing.bonusBalance;
+        existing.balanceUpdatedAt = localU.balanceUpdatedAt;
+        existing.version = localU.version || existing.version;
+      }
+      userMap.set(localU.id, existing);
+    }
+  });
+
+  remoteDb.users = Array.from(userMap.values());
+  return remoteDb;
+}
+
+async function syncWithCloud(force = false) {
+  const now = Date.now();
+
+  // Throttle remote fetching to once every 10 seconds to prevent reading stale replication snapshots
+  if (!force && memoryCache && Array.isArray(memoryCache.users) && (now - lastCloudSync < 10000)) {
+    return memoryCache;
+  }
+
   // 1. Primary: Official Vercel Private Blob Storage (cache-busted real-time fetch)
   try {
-    const cacheBusterUrl = `https://qhxj3ttyzwbzkgca.private.blob.vercel-storage.com/${BLOB_FILE_NAME}?t=${Date.now()}`;
+    const cacheBusterUrl = `https://qhxj3ttyzwbzkgca.private.blob.vercel-storage.com/${BLOB_FILE_NAME}?t=${now}`;
     const res = await fetch(cacheBusterUrl, {
       headers: { Authorization: `Bearer ${BLOB_TOKEN}` },
       cache: 'no-store'
@@ -25,23 +66,10 @@ async function syncWithCloud() {
     if (res.ok) {
       const json = await res.json();
       if (json && Array.isArray(json.users) && json.users.length > 0) {
-        // Merge with existing in-memory users so we never lose a newly created user
-        if (memoryCache && Array.isArray(memoryCache.users)) {
-          memoryCache.users.forEach(memU => {
-            const exists = json.users.some(cloudU => 
-              cloudU.id === memU.id || 
-              (memU.username && cloudU.username && cloudU.username.toLowerCase() === memU.username.toLowerCase()) ||
-              (memU.email && cloudU.email && cloudU.email.toLowerCase() === memU.email.toLowerCase())
-            );
-            if (!exists) {
-              json.users.push(memU);
-            }
-          });
-        }
-        memoryCache = json;
-        lastCloudSync = Date.now();
+        memoryCache = smartMergeUserData(memoryCache, json);
+        lastCloudSync = now;
         try {
-          fs.writeFileSync(DB_PATH, JSON.stringify(json, null, 2), 'utf8');
+          fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
         } catch (e) {}
         return memoryCache;
       }
@@ -50,35 +78,25 @@ async function syncWithCloud() {
     console.warn('Vercel Blob cache-busted sync attempt:', err.message);
   }
 
-  // 2. Secondary redundant cloud backup
-  try {
-    const res = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.data && Array.isArray(json.data.users)) {
-        if (memoryCache && Array.isArray(memoryCache.users)) {
-          memoryCache.users.forEach(memU => {
-            const exists = json.data.users.some(cloudU => 
-              cloudU.id === memU.id || 
-              (memU.username && cloudU.username && cloudU.username.toLowerCase() === memU.username.toLowerCase()) ||
-              (memU.email && cloudU.email && cloudU.email.toLowerCase() === memU.email.toLowerCase())
-            );
-            if (!exists) {
-              json.data.users.push(memU);
-            }
-          });
+  // 2. Secondary redundant cloud backup (only if memoryCache is empty!)
+  if (!memoryCache || !Array.isArray(memoryCache.users) || memoryCache.users.length <= 2) {
+    try {
+      const res = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.data && Array.isArray(json.data.users)) {
+          memoryCache = smartMergeUserData(memoryCache, json.data);
+          lastCloudSync = now;
+          try {
+            fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
+          } catch (e) {}
+          return memoryCache;
         }
-        memoryCache = json.data;
-        lastCloudSync = Date.now();
-        try {
-          fs.writeFileSync(DB_PATH, JSON.stringify(json.data, null, 2), 'utf8');
-        } catch (e) {}
-        return memoryCache;
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
 
-  return memoryCache;
+  return memoryCache || readDB();
 }
 
 async function pushToCloud(data) {
@@ -211,7 +229,8 @@ async function writeDB(data) {
   } catch (err) {
     console.warn('writeDB filesystem write failed (using memory cache):', err.message);
   }
-  await pushToCloud(data);
+  // Push to cloud in background without stalling HTTP response
+  pushToCloud(data).catch(err => console.error('Background cloud push error:', err.message));
 }
 
 // User Helpers
@@ -259,6 +278,8 @@ async function createUser({ username, email, password, role = 'user', initialBal
     role: cleanRole,
     balance: Number(initialBalance),
     bonusBalance: 0.0,
+    balanceUpdatedAt: Date.now(),
+    version: 1,
     createdAt: new Date().toISOString(),
     isBanned: false
   };
@@ -273,12 +294,14 @@ async function updateUserBalance(userId, deltaAmount) {
   const user = db.users.find(u => u.id === userId);
   if (!user) throw new Error('User not found');
 
-  const newBalance = Math.round((user.balance + deltaAmount) * 100) / 100;
-  if (newBalance < 0) {
+  const newBalance = Math.max(0, Math.round((user.balance + deltaAmount) * 100) / 100);
+  if (deltaAmount < 0 && (user.balance + deltaAmount) < -0.01) {
     throw new Error('Insufficient balance');
   }
 
   user.balance = newBalance;
+  user.balanceUpdatedAt = Date.now();
+  user.version = (user.version || 0) + 1;
   await writeDB(db);
   return newBalance;
 }

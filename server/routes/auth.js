@@ -303,7 +303,8 @@ router.get('/me', authenticateToken, async (req, res) => {
       email: freshUser.email,
       role: freshUser.role,
       balance: freshUser.balance,
-      bonusBalance: freshUser.bonusBalance
+      bonusBalance: freshUser.bonusBalance,
+      balanceUpdatedAt: freshUser.balanceUpdatedAt || 0
     }
   });
 });

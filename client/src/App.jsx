@@ -68,9 +68,22 @@ export default function App() {
         })
         .then(data => {
           if (data && data.user) {
-            setUser(data.user);
-            setBalance(data.user.balance);
-            localStorage.setItem('luckywin_active_user', JSON.stringify(data.user));
+            const savedStr = localStorage.getItem('luckywin_active_user');
+            let effectiveBalance = data.user.balance;
+            let effectiveUpdatedAt = data.user.balanceUpdatedAt || 0;
+            if (savedStr) {
+              try {
+                const saved = JSON.parse(savedStr);
+                if (saved.balanceUpdatedAt && saved.balanceUpdatedAt > effectiveUpdatedAt) {
+                  effectiveBalance = saved.balance;
+                  effectiveUpdatedAt = saved.balanceUpdatedAt;
+                }
+              } catch (e) {}
+            }
+            const updatedUser = { ...data.user, balance: effectiveBalance, balanceUpdatedAt: effectiveUpdatedAt };
+            setUser(updatedUser);
+            setBalance(effectiveBalance);
+            localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
           }
         })
         .catch(() => {
@@ -84,9 +97,10 @@ export default function App() {
   }, []);
 
   const handleAuthSuccess = (userData) => {
-    setUser(userData);
+    const withTS = { ...userData, balanceUpdatedAt: Date.now() };
+    setUser(withTS);
     setBalance(userData.balance !== undefined ? userData.balance : 0.0);
-    localStorage.setItem('luckywin_active_user', JSON.stringify(userData));
+    localStorage.setItem('luckywin_active_user', JSON.stringify(withTS));
   };
 
   const handleLogout = () => {
@@ -98,16 +112,18 @@ export default function App() {
   };
 
   const handleBalanceUpdate = (newBalance) => {
-    const formatted = parseFloat(Number(newBalance).toFixed(2));
+    const formatted = parseFloat(Math.max(0, Number(newBalance)).toFixed(2));
     setBalance(formatted);
+    const now = Date.now();
     if (user) {
-      const updatedUser = { ...user, balance: formatted };
+      const updatedUser = { ...user, balance: formatted, balanceUpdatedAt: now };
       setUser(updatedUser);
       localStorage.setItem('luckywin_active_user', JSON.stringify(updatedUser));
       const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
       const idx = localUsers.findIndex(u => u.id === user.id || u.username === user.username);
       if (idx !== -1) {
         localUsers[idx].balance = formatted;
+        localUsers[idx].balanceUpdatedAt = now;
         localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
       }
     }
