@@ -100,12 +100,15 @@ export default function MinesGame({ user, balance, onBalanceUpdate, onOpenAuth }
             setNextMultiplier(data.nextMultiplier);
             onBalanceUpdate(data.newBalance);
             startedRemotely = true;
+          } else {
+            setMessage({ type: 'error', text: data.error || 'Failed to start game' });
+            return;
           }
         }
       } catch (err) {}
 
       if (!startedRemotely) {
-        // Fallback to local game
+        // Fallback to local game only if server is unreachable
         const total = 25;
         const count = Number(minesCount);
         const mines = new Set();

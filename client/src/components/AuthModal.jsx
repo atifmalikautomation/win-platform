@@ -326,7 +326,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
           id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
           username: cleanUsername,
           email: cleanEmail,
-          role: cleanUsername.toLowerCase().includes('admin') ? 'admin' : 'user',
+          role: 'user',
           balance: 0.0,
           bonusBalance: 0.0,
           authProvider: cleanEmail.includes('@gmail.com') ? 'google' : 'email',

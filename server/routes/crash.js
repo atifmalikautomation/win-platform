@@ -5,9 +5,6 @@ const db = require('../db');
 
 const router = express.Router();
 
-// Active crash bets in-memory map for fast lookup
-const activeCrashBets = new Map();
-
 // ==================== GLOBALLY SYNCHRONIZED AVIATOR ROUND ENGINE ====================
 let currentRound = null;
 let roundHistory = [1.45, 2.80, 1.10, 14.50, 3.20, 1.95, 5.80, 1.05, 32.10, 2.15, 8.40, 1.72];
@@ -71,6 +68,7 @@ function getOrUpdateLiveRound() {
     currentRound.serverTime = now;
     settings.activeCrashRound = currentRound;
     db.updateGameSettings({ activeCrashRound: currentRound }).catch(() => {});
+    db.markUncashedBetsLost().catch(() => {});
     return currentRound;
   }
 
@@ -115,7 +113,6 @@ function getOrUpdateLiveRound() {
         currentRound.crashTime = currentRound.flightStartTime + getFlightDurationMs(mult);
         currentRound.nextRoundStartTime = currentRound.crashTime + 3500;
         currentRound.crashNowHandled = 0;
-        // NOTE: mult is NOT added to history here! It must only appear after the round crashes!
       }
     }
     settings.activeCrashRound = currentRound;
@@ -131,7 +128,7 @@ function getOrUpdateLiveRound() {
     currentRound.state = 'FLYING';
     const elapsedSec = (now - currentRound.flightStartTime) / 1000;
     const curM = parseFloat(Math.pow(Math.E, 0.072 * elapsedSec * 1.65).toFixed(2));
-    currentRound.multiplier = Math.min(currentRound.crashedAt, curM);
+    currentRound.multiplier = Math.min(currentRound.crashedAt, Math.max(1.00, curM));
     currentRound.countdown = 0;
   } else {
     // Round has crashed!
@@ -143,6 +140,8 @@ function getOrUpdateLiveRound() {
       roundHistory.unshift(currentRound.crashedAt);
       if (roundHistory.length > 20) roundHistory.pop();
     }
+    // Mark remaining active uncashed bets as lost
+    db.markUncashedBetsLost().catch(() => {});
   }
 
   // Ensure history NEVER leaks the active round before it actually crashes
@@ -199,7 +198,7 @@ router.post('/consume-forced', async (req, res) => {
   }
 });
 
-// 4. Place Crash Bet
+// 4. Place Crash Bet (Only during WAITING phase)
 router.post('/bet', authenticateToken, async (req, res) => {
   try {
     const { amount, autoCashout } = req.body;
@@ -209,6 +208,11 @@ router.post('/bet', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Minimum bet is PKR 10' });
     }
 
+    const live = getOrUpdateLiveRound();
+    if (live.state !== 'WAITING') {
+      return res.status(400).json({ error: 'Bets can only be placed during the countdown before takeoff' });
+    }
+
     const result = await db.placeBetTransaction({
       userId: req.user.id,
       username: req.user.username,
@@ -216,20 +220,42 @@ router.post('/bet', authenticateToken, async (req, res) => {
       autoCashout
     });
 
-    activeCrashBets.set(result.bet.id, result.bet);
-
     res.json({
       success: true,
       bet: result.bet,
       newBalance: result.newBalance
     });
   } catch (err) {
-    const status = (err.message === 'Insufficient balance' || err.message === 'Minimum bet is PKR 10') ? 400 : 500;
+    const status = (err.message === 'Insufficient balance' || err.message === 'Minimum bet is PKR 10' || err.message.includes('countdown')) ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
 });
 
-// 5. Cashout Crash Bet
+// 5. Cancel Crash Bet (Only during WAITING phase before flight starts)
+router.post('/cancel-bet', authenticateToken, async (req, res) => {
+  try {
+    const { betId } = req.body;
+    if (!betId) {
+      return res.status(400).json({ error: 'Bet ID is required' });
+    }
+
+    const live = getOrUpdateLiveRound();
+    if (live.state !== 'WAITING') {
+      return res.status(400).json({ error: 'Bets can only be cancelled during the countdown before takeoff' });
+    }
+
+    const result = await db.cancelBetTransaction({
+      userId: req.user.id,
+      betId
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 6. Cashout Crash Bet (Verified server flight multiplier, prevents double cashouts and late claims)
 router.post('/cashout', authenticateToken, async (req, res) => {
   try {
     const { betId, multiplier, amount } = req.body;
@@ -239,39 +265,46 @@ router.post('/cashout', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Valid multiplier >= 1.01 required' });
     }
 
-    const cachedBet = activeCrashBets.get(betId);
-    const betAmount = (cachedBet && (cachedBet.amount || cachedBet.betAmount)) || Number(amount);
+    const live = getOrUpdateLiveRound();
 
-    if (!betAmount || isNaN(betAmount) || betAmount <= 0) {
-      return res.status(400).json({ error: 'Bet not found or invalid amount' });
+    if (live.state !== 'FLYING') {
+      return res.status(400).json({ error: 'Plane is not flying or has already flown away' });
     }
 
-    if (cachedBet && cachedBet.cashedOut) {
-      return res.status(400).json({ error: 'Bet already cashed out' });
+    // Server calculates exact current flight multiplier at this millisecond
+    const now = Date.now();
+    const elapsedSec = Math.max(0, (now - live.flightStartTime) / 1000);
+    const serverCalculatedMult = parseFloat(Math.pow(Math.E, 0.072 * elapsedSec * 1.65).toFixed(2));
+
+    // Allow tiny network transit window (0.12x), but NEVER exceed the actual crash multiplier!
+    const maxAllowedMultiplier = Math.min(live.crashedAt, parseFloat((serverCalculatedMult + 0.12).toFixed(2)));
+
+    if (numMultiplier > maxAllowedMultiplier) {
+      return res.status(400).json({
+        error: `Cashout rejected: flight has only reached ${serverCalculatedMult}x`
+      });
     }
+
+    const verifiedMultiplier = Math.min(numMultiplier, maxAllowedMultiplier);
 
     const result = await db.cashoutBetTransaction({
       userId: req.user.id,
       username: req.user.username,
       betId,
-      betAmount,
-      multiplier: numMultiplier
+      betAmount: Number(amount),
+      multiplier: verifiedMultiplier,
+      maxAllowedMultiplier
     });
-
-    if (cachedBet) {
-      cachedBet.cashedOut = true;
-      cachedBet.cashoutMultiplier = numMultiplier;
-      cachedBet.payout = result.payout;
-    }
 
     res.json({
       success: true,
       payout: result.payout,
       multiplier: result.multiplier,
-      newBalance: result.newBalance
+      newBalance: result.newBalance,
+      betId: result.betId
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 

@@ -12,13 +12,16 @@ async function authenticateToken(req, res, next) {
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Access token required' });
 
-  // Support local fallback token authentication
+  // Support local fallback token authentication for demo
   if (token.startsWith('local_token_')) {
     const userId = token.replace('local_token_', '');
-    let user = db.findUserById(userId) || (userId.includes('admin') ? db.findUserByUsername('saqib_admin') : null);
+    let user = db.findUserById(userId);
+    if (!user && userId === 'usr_demo') {
+      user = db.findUserByUsername('LuckyPlayer');
+    }
     if (!user && db.syncWithCloud) {
       await db.syncWithCloud();
-      user = db.findUserById(userId) || (userId.includes('admin') ? db.findUserByUsername('saqib_admin') : null);
+      user = db.findUserById(userId);
     }
     if (user && !user.isBanned) {
       req.user = user;
@@ -146,7 +149,7 @@ router.post('/login', async (req, res) => {
     }
 
     const portal = (req.body.portal || '').trim().toLowerCase();
-    const isAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || user.role === 'admin' || cleanUser.includes('admin'));
+    const isAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || user.role === 'admin');
 
     // Admin account CANNOT log in from player form unless portal === 'admin'
     if (isAdminAccount && portal !== 'admin') {
@@ -250,7 +253,7 @@ router.post('/google', async (req, res) => {
 
       const cleanUser = (user.username || '').trim().toLowerCase();
       const cleanEmail = (user.email || '').trim().toLowerCase();
-      const effectiveRole = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanUser.includes('admin')) ? 'admin' : (user.role || 'user');
+      const effectiveRole = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') ? 'admin' : (user.role || 'user');
       user.role = effectiveRole;
 
       const nowIso = new Date().toISOString();

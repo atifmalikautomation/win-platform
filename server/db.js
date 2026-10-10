@@ -346,7 +346,7 @@ async function deleteUser(userId) {
   const user = db.users[userIdx];
   const cleanName = (user.username || '').toLowerCase();
   const cleanEmail = (user.email || '').toLowerCase();
-  if (cleanName === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanName.includes('admin')) {
+  if (cleanName === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') {
     throw new Error('Super Admin account cannot be deleted');
   }
 
@@ -447,6 +447,7 @@ function getTransactions(userId = null) {
 }
 
 // Atomic Aviator Bet Placement (Single cloud sync + single cloud write, zero race conditions)
+// Atomic Aviator Bet Placement (Single cloud sync + single cloud write, zero race conditions)
 async function placeBetTransaction({ userId, username, betAmount, autoCashout }) {
   if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
@@ -480,7 +481,7 @@ async function placeBetTransaction({ userId, username, betAmount, autoCashout })
     betAmount: numAmount,
     multiplier: 0,
     payout: 0,
-    status: 'lost',
+    status: 'placed', // 'placed' | 'won' | 'lost' | 'cancelled'
     autoCashout: autoCashout ? Number(autoCashout) : null,
     createdAt: new Date().toISOString()
   };
@@ -495,59 +496,136 @@ async function placeBetTransaction({ userId, username, betAmount, autoCashout })
   return { success: true, bet: betRecord, newBalance };
 }
 
-// Atomic Aviator Bet Cashout (Exact payout calculation, single cloud write)
-async function cashoutBetTransaction({ userId, username, betId, betAmount, multiplier }) {
+// Cancel Bet during WAITING phase
+async function cancelBetTransaction({ userId, betId }) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) throw new Error('User not found');
+
+  if (!Array.isArray(db.bets)) db.bets = [];
+  const betRecord = db.bets.find(b => b.id === betId && b.userId === userId);
+  if (!betRecord) {
+    throw new Error('Bet not found');
+  }
+
+  if (betRecord.status !== 'placed') {
+    throw new Error(`Cannot cancel bet: status is already '${betRecord.status}'`);
+  }
+
+  betRecord.status = 'cancelled';
+  betRecord.cancelledAt = new Date().toISOString();
+
+  const refundedBalance = Math.round((Number(user.balance || 0) + betRecord.betAmount) * 100) / 100;
+  user.balance = refundedBalance;
+  user.balanceUpdatedAt = Date.now();
+  user.version = (user.version || 0) + 1;
+
+  if (db.stats && db.stats.totalWagered) {
+    db.stats.totalWagered = Math.max(0, Math.round((db.stats.totalWagered - betRecord.betAmount) * 100) / 100);
+    db.stats.grossGamingRevenue = Math.round(((db.stats.totalWagered || 0) - (db.stats.totalPayouts || 0)) * 100) / 100;
+  }
+
+  await writeDB(db);
+  return { success: true, cancelledBetId: betId, newBalance: refundedBalance };
+}
+
+// Atomic Aviator Bet Cashout (Strict verification against double-cashout and invalid states)
+async function cashoutBetTransaction({ userId, username, betId, betAmount, multiplier, maxAllowedMultiplier }) {
   if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
   const user = db.users.find(u => u.id === userId);
   if (!user) throw new Error('User not found');
 
   const numAmount = Number(betAmount);
-  const numMultiplier = Number(multiplier);
+  let numMultiplier = Number(multiplier);
   if (isNaN(numAmount) || numAmount <= 0) throw new Error('Invalid bet amount');
   if (isNaN(numMultiplier) || numMultiplier < 1.01) throw new Error('Valid multiplier >= 1.01 required');
 
-  const payout = Math.round(numAmount * numMultiplier * 100) / 100;
+  if (maxAllowedMultiplier && numMultiplier > maxAllowedMultiplier) {
+    numMultiplier = maxAllowedMultiplier;
+  }
+
+  if (!Array.isArray(db.bets)) db.bets = [];
+  let betRecord = db.bets.find(b => b.id === betId && b.userId === userId);
+  if (!betRecord && userId) {
+    // Check placed bet matching amount for this user
+    betRecord = db.bets.find(b => b.userId === userId && b.status === 'placed' && Math.abs(b.betAmount - numAmount) < 0.01);
+  }
+
+  if (!betRecord) {
+    throw new Error('Active bet not found for cashout');
+  }
+
+  if (betRecord.status === 'won') {
+    throw new Error('Bet has already been cashed out');
+  }
+  if (betRecord.status === 'cancelled') {
+    throw new Error('Bet was cancelled');
+  }
+  if (betRecord.status === 'lost') {
+    throw new Error('Plane already crashed; bet was lost');
+  }
+
+  const payout = Math.round(betRecord.betAmount * numMultiplier * 100) / 100;
   const currentBal = Number(user.balance || 0);
   const newBalance = Math.round((currentBal + payout) * 100) / 100;
   user.balance = newBalance;
   user.balanceUpdatedAt = Date.now();
   user.version = (user.version || 0) + 1;
 
-  if (!Array.isArray(db.bets)) db.bets = [];
+  betRecord.multiplier = numMultiplier;
+  betRecord.payout = payout;
+  betRecord.status = 'won';
+  betRecord.cashedOutAt = new Date().toISOString();
+
   if (!db.stats) db.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
-
-  // Find and update existing bet record
-  let betRecord = db.bets.find(b => b.id === betId);
-  if (!betRecord && userId) {
-    betRecord = db.bets.find(b => b.userId === userId && b.status === 'lost' && Math.abs(b.betAmount - numAmount) < 0.01);
-  }
-
-  if (betRecord) {
-    betRecord.multiplier = numMultiplier;
-    betRecord.payout = payout;
-    betRecord.status = 'won';
-  } else {
-    betRecord = {
-      id: betId || `crash_bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-      userId: user.id,
-      username: user.username,
-      game: 'aviator',
-      betAmount: numAmount,
-      multiplier: numMultiplier,
-      payout,
-      status: 'won',
-      createdAt: new Date().toISOString()
-    };
-    db.bets.unshift(betRecord);
-    if (db.bets.length > 500) db.bets.pop();
-  }
-
   db.stats.totalPayouts = Math.round(((db.stats.totalPayouts || 0) + payout) * 100) / 100;
   db.stats.grossGamingRevenue = Math.round(((db.stats.totalWagered || 0) - db.stats.totalPayouts) * 100) / 100;
 
   await writeDB(db);
-  return { success: true, payout, multiplier: numMultiplier, newBalance };
+  return { success: true, payout, multiplier: numMultiplier, newBalance, betId: betRecord.id };
+}
+
+// Mark remaining active uncashed bets as lost when round crashes
+async function markUncashedBetsLost() {
+  const db = readDB();
+  if (!Array.isArray(db.bets)) return;
+  let modified = false;
+  db.bets.forEach(b => {
+    if (b.game === 'aviator' && b.status === 'placed') {
+      b.status = 'lost';
+      modified = true;
+    }
+  });
+  if (modified) {
+    await writeDB(db);
+  }
+}
+
+// Mines Serverless Persistence Helpers (Stops in-memory loss across lambdas)
+async function saveUserMinesGame(userId, session) {
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.activeMinesGame = session;
+    await writeDB(db);
+  }
+}
+
+function getUserMinesGame(userId) {
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  return (user && user.activeMinesGame) ? user.activeMinesGame : null;
+}
+
+async function clearUserMinesGame(userId) {
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    delete user.activeMinesGame;
+    await writeDB(db);
+  }
 }
 
 // Bets & Stats
@@ -659,7 +737,12 @@ module.exports = {
   getTransactions,
   recordBet,
   placeBetTransaction,
+  cancelBetTransaction,
   cashoutBetTransaction,
+  markUncashedBetsLost,
+  saveUserMinesGame,
+  getUserMinesGame,
+  clearUserMinesGame,
   getRecentBets,
   getGameSettings,
   updateGameSettings,

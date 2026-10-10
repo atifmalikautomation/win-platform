@@ -68,6 +68,19 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     userRef.current = user;
   }, [user]);
 
+  const bet1Ref = useRef(bet1);
+  const bet2Ref = useRef(bet2);
+  const bet1AutoFiredRef = useRef(false);
+  const bet2AutoFiredRef = useRef(false);
+
+  useEffect(() => {
+    bet1Ref.current = bet1;
+  }, [bet1]);
+
+  useEffect(() => {
+    bet2Ref.current = bet2;
+  }, [bet2]);
+
   const flyIntervalRef = useRef(null);
 
   // Aviator Flew Away Fly-Off Animation
@@ -307,6 +320,9 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
           flewAwayPos.current.isFlyingOff = false;
           soundFx.stopFlightSound();
 
+          bet1AutoFiredRef.current = false;
+          bet2AutoFiredRef.current = false;
+
           // Reset bets for the fresh round
           setBet1(prev => ({
             ...prev,
@@ -358,21 +374,19 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
           setMultiplier(cappedM);
         }
 
-        // Auto Cashout for Bet 1
-        setBet1(prev => {
-          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && cappedM >= prev.autoCashout) {
-            if (handleCashoutRef.current) handleCashoutRef.current(1, prev.autoCashout);
-          }
-          return prev;
-        });
+        // Auto Cashout for Bet 1 (Purely outside setState, triggered once)
+        const b1 = bet1Ref.current;
+        if (b1 && b1.placedBet && !b1.hasCashedOut && b1.autoCashoutEnabled && cappedM >= b1.autoCashout && !bet1AutoFiredRef.current) {
+          bet1AutoFiredRef.current = true;
+          if (handleCashoutRef.current) handleCashoutRef.current(1, b1.autoCashout);
+        }
 
-        // Auto Cashout for Bet 2
-        setBet2(prev => {
-          if (prev.placedBet && !prev.hasCashedOut && prev.autoCashoutEnabled && cappedM >= prev.autoCashout) {
-            if (handleCashoutRef.current) handleCashoutRef.current(2, prev.autoCashout);
-          }
-          return prev;
-        });
+        // Auto Cashout for Bet 2 (Purely outside setState, triggered once)
+        const b2 = bet2Ref.current;
+        if (b2 && b2.placedBet && !b2.hasCashedOut && b2.autoCashoutEnabled && cappedM >= b2.autoCashout && !bet2AutoFiredRef.current) {
+          bet2AutoFiredRef.current = true;
+          if (handleCashoutRef.current) handleCashoutRef.current(2, b2.autoCashout);
+        }
       } else {
         // ========== 3. CRASHED / FLEW AWAY PHASE ==========
         if (gameStateRef.current !== 'CRASHED') {
@@ -874,6 +888,50 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
     }
   };
 
+  const handleCancelBet = async (panelNum) => {
+    const panel = panelNum === 1 ? bet1 : bet2;
+    const setPanel = panelNum === 1 ? setBet1 : setBet2;
+    if (!panel.placedBet || panel.hasCashedOut) return;
+
+    const betToCancel = panel.placedBet;
+    soundFx.playBet();
+
+    // Optimistic balance restore
+    const refunded = parseFloat((balanceRef.current + betToCancel.amount).toFixed(2));
+    balanceRef.current = refunded;
+    onBalanceUpdateRef.current(refunded);
+
+    setPanel(prev => ({
+      ...prev,
+      placedBet: null,
+      hasCashedOut: false,
+      cashoutPayout: 0,
+      cashoutMultiplier: 0
+    }));
+
+    setBets(prev => prev.filter(b => b.id !== betToCancel.id));
+
+    const token = localStorage.getItem('luckywin_token');
+    if (token && betToCancel.id) {
+      try {
+        const res = await fetch('/api/crash/cancel-bet', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ betId: betToCancel.id })
+        });
+        const data = await res.json();
+        if (res.ok && data.newBalance !== undefined) {
+          const confirmed = Number(data.newBalance);
+          balanceRef.current = confirmed;
+          onBalanceUpdateRef.current(confirmed);
+        }
+      } catch (err) {}
+    }
+  };
+
   const handleCashout = (panelNum, explicitMultiplier) => {
     const panel = panelNum === 1 ? bet1 : bet2;
     const setPanel = panelNum === 1 ? setBet1 : setBet2;
@@ -1104,6 +1162,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
               gameState={gameState}
               currentMultiplier={multiplier}
               onPlaceBet={() => handlePlaceBet(1)}
+              onCancelBet={() => handleCancelBet(1)}
               onCashout={() => handleCashout(1)}
               user={user}
               balance={balance}
@@ -1117,6 +1176,7 @@ export default function CrashGame({ socket, user, balance, onBalanceUpdate, onOp
               gameState={gameState}
               currentMultiplier={multiplier}
               onPlaceBet={() => handlePlaceBet(2)}
+              onCancelBet={() => handleCancelBet(2)}
               onCashout={() => handleCashout(2)}
               user={user}
               balance={balance}
@@ -1240,6 +1300,7 @@ function SkyWinBetPanel({
   gameState,
   currentMultiplier,
   onPlaceBet,
+  onCancelBet,
   onCashout
 }) {
   const isBetActive = Boolean(state.placedBet);
@@ -1359,36 +1420,60 @@ function SkyWinBetPanel({
           </div>
         </div>
 
-        {/* Right (Cols 5): Solid SkyWin BET / CASH OUT Button */}
+        {/* Right (Cols 5): Solid SkyWin Action Button (BET / CANCEL / CASH OUT / BADGES) */}
         <div className="col-span-5 flex">
           {isBetActive && gameState === 'FLYING' && !state.hasCashedOut ? (
             <button
               type="button"
               onClick={onCashout}
-              className="btn-cashout-gold w-full flex flex-col items-center justify-center p-2 text-slate-950 font-black min-h-[72px] sm:min-h-[78px] touch-manipulation active:scale-[0.98] select-none"
+              className="btn-cashout-gold w-full flex flex-col items-center justify-center p-2 text-slate-950 font-black min-h-[72px] sm:min-h-[78px] touch-manipulation active:scale-[0.98] select-none shadow-lg shadow-[#ffb800]/20 animate-pulse"
             >
-              <span className="text-[11px] uppercase font-black tracking-wider leading-none font-heading">
+              <span className="text-[11px] uppercase font-black tracking-wider leading-none font-heading text-amber-950">
                 Cash Out
               </span>
-              <span className="text-base sm:text-lg font-mono font-black mt-1 leading-tight">
-                {livePayout}
+              <span className="text-base sm:text-lg font-mono font-black mt-1 leading-tight text-black">
+                {livePayout} PKR
               </span>
             </button>
           ) : isBetActive && state.hasCashedOut ? (
-            <div className="w-full rounded-xl bg-[#00c638]/15 border border-[#00c638]/30 text-[#00c638] flex flex-col items-center justify-center p-2 min-h-[72px] sm:min-h-[78px]">
-              <span className="text-[10px] font-bold uppercase font-heading">Cashed Out</span>
-              <span className="text-sm font-black font-mono mt-0.5">+{state.cashoutPayout}</span>
+            <div className="w-full rounded-xl bg-[#00c638]/15 border border-[#00c638]/40 text-[#00c638] flex flex-col items-center justify-center p-2 min-h-[72px] sm:min-h-[78px]">
+              <span className="text-[10px] font-bold uppercase font-heading tracking-wider">Cashed Out</span>
+              <span className="text-sm font-black font-mono mt-0.5">+{state.cashoutPayout} PKR</span>
+              <span className="text-[10px] font-mono text-emerald-400 font-bold">@{state.cashoutMultiplier?.toFixed(2)}x</span>
             </div>
           ) : isBetActive && gameState === 'WAITING' ? (
-            <div className="w-full rounded-xl bg-[#1a202d] border border-[#252d40] text-slate-300 flex items-center justify-center text-xs font-bold font-heading p-2 text-center min-h-[72px] sm:min-h-[78px]">
-              Waiting...
+            <button
+              type="button"
+              onClick={onCancelBet}
+              className="w-full rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white flex flex-col items-center justify-center p-2 min-h-[72px] sm:min-h-[78px] touch-manipulation active:scale-[0.98] select-none shadow-lg shadow-red-500/25 border border-red-500/40"
+            >
+              <span className="text-xs uppercase font-black tracking-wider leading-none font-heading">
+                CANCEL
+              </span>
+              <span className="text-xs font-mono font-bold mt-1 text-red-100">
+                {state.placedBet.amount} PKR
+              </span>
+            </button>
+          ) : isBetActive && gameState === 'CRASHED' && !state.hasCashedOut ? (
+            <div className="w-full rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex flex-col items-center justify-center p-2 min-h-[72px] sm:min-h-[78px]">
+              <span className="text-[10px] font-black uppercase tracking-wider font-heading">Flew Away</span>
+              <span className="text-xs font-mono font-bold mt-0.5 text-rose-300">Busted</span>
             </div>
+          ) : gameState === 'FLYING' ? (
+            <button
+              type="button"
+              disabled
+              className="w-full rounded-xl bg-[#141824] border border-[#1e2538] text-slate-500 flex flex-col items-center justify-center p-2 text-center min-h-[72px] sm:min-h-[78px] cursor-not-allowed opacity-60"
+            >
+              <span className="text-[10px] uppercase font-bold tracking-wider font-heading">Wait Next</span>
+              <span className="text-xs font-bold font-heading mt-0.5">Round</span>
+            </button>
           ) : (
             <button
               type="button"
               disabled={gameState !== 'WAITING'}
               onClick={onPlaceBet}
-              className="btn-bet-green w-full flex flex-col items-center justify-center p-2 text-slate-950 font-black min-h-[72px] sm:min-h-[78px] touch-manipulation active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed select-none"
+              className="btn-bet-green w-full flex flex-col items-center justify-center p-2 text-slate-950 font-black min-h-[72px] sm:min-h-[78px] touch-manipulation active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed select-none shadow-lg shadow-[#00e676]/20"
             >
               <span className="text-xs sm:text-sm uppercase font-black tracking-wider leading-none font-heading">
                 BET

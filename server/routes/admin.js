@@ -10,7 +10,7 @@ const router = express.Router();
 function requireAdmin(req, res, next) {
   const cleanName = (req.user?.username || '').toLowerCase();
   const cleanEmail = (req.user?.email || '').toLowerCase();
-  const isAdmin = req.user?.role === 'admin' || cleanName === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanName.includes('admin');
+  const isAdmin = req.user?.role === 'admin' || cleanName === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com';
   if (!isAdmin) {
     return res.status(403).json({ error: 'Access denied: Admin privileges required' });
   }
