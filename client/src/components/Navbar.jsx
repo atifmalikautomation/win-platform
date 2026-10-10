@@ -72,17 +72,6 @@ export default function Navbar({
               Aviator X
             </button>
 
-            <button
-              onClick={() => { setActiveTab('mines'); soundFx.playBet(); }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-heading font-bold transition-all ${
-                activeTab === 'mines'
-                  ? 'bg-[#1a68ff] text-white shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <Bomb className="w-3.5 h-3.5 text-[#00c638]" />
-              Mines
-            </button>
 
             <button
               onClick={() => { setActiveTab('lobby'); soundFx.playBet(); }}
@@ -217,15 +206,7 @@ export default function Navbar({
           <img src="/aviator_plane.png" alt="Aviator" className="w-4 h-3 object-contain" />
           Aviator X
         </button>
-        <button
-          onClick={() => { setActiveTab('mines'); soundFx.playBet(); }}
-          className={`flex items-center gap-1 text-xs font-heading font-bold px-3 py-1 rounded-lg ${
-            activeTab === 'mines' ? 'bg-[#1a68ff] text-white' : 'text-slate-400'
-          }`}
-        >
-          <Bomb className="w-3.5 h-3.5 text-[#00c638]" />
-          Mines
-        </button>
+
         <button
           onClick={() => { setActiveTab('lobby'); soundFx.playBet(); }}
           className={`flex items-center gap-1 text-xs font-heading font-bold px-3 py-1 rounded-lg ${

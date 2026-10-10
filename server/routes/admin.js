@@ -1,8 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('./auth');
 const db = require('../db');
-const { getActiveMinesSessions, setMinesRigging } = require('./mines');
-const { getOrUpdateLiveRound } = require('./crash');
+const engine = require('../aviatorEngine');
 
 const router = express.Router();
 
@@ -233,85 +232,82 @@ router.post('/reset-stats', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
-// ==================== LIVE GAME CONTROLS & RIGGING ====================
+// ==================== AVIATOR OPERATIONS (no crash-point control) ====================
+// The admin can NOT choose or force a crash point (that would cheat players
+// who are told the game is provably fair). Available tools:
+//   * Emergency Stop  -> current round voided, every open bet refunded
+//   * Pause / Resume  -> stop starting new rounds (e.g. maintenance)
+//   * House edge      -> applies to future rounds, shown publicly as RTP
 
-// 1. Aviator Real-Time Game Control
+function maskedBets(roundId) {
+  return db.getRoundBetsPublic(roundId);
+}
+
 router.get('/game-control/aviator', authenticateToken, requireAdmin, async (req, res) => {
-  const crashEngine = req.app.get('crashEngine');
-  if (crashEngine) {
-    return res.json(crashEngine.getAdminStatus());
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    await engine.loadControl(false);
+    if (db.syncWithCloud) await db.syncWithCloud(false);
+    const live = engine.publicState();
+    const roundBets = live.roundId ? db.readDB().bets.filter(b => b.game === 'aviator' && b.roundId === live.roundId && b.status !== 'cancelled') : [];
+    res.json({
+      ...live,
+      bets: maskedBets(live.roundId),
+      realBets: roundBets.map(b => ({
+        id: b.id,
+        username: b.username,
+        amount: b.betAmount,
+        autoCashout: b.autoCashout,
+        status: b.status,
+        multiplier: b.multiplier,
+        payout: b.payout
+      })),
+      roundTotals: {
+        count: roundBets.length,
+        wagered: roundBets.reduce((s, b) => s + (b.betAmount || 0), 0),
+        paid: roundBets.reduce((s, b) => s + (b.status === 'won' ? b.payout || 0 : 0), 0)
+      },
+      control: engine.adminInfo()
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  // Serverless fallback from cloud DB settings
-  if (db.syncWithCloud) await db.syncWithCloud();
-  const settings = db.getGameSettings();
-  const live = getOrUpdateLiveRound();
-  const recentBets = db.getRecentBets(10);
-  res.json({
-    state: live.state,
-    currentMultiplier: live.multiplier,
-    crashedAt: live.state === 'CRASHED' ? live.crashedAt : null,
-    countdown: live.countdown,
-    forcedCrashMultiplier: settings.forcedNextMultiplier || null,
-    riggingMode: settings.aviatorMode || 'fair',
-    totalBets: 25 + recentBets.length,
-    realBets: recentBets.map(b => ({
-      id: b.id,
-      username: b.username,
-      amount: b.betAmount,
-      autoCashout: null,
-      cashedOut: b.status === 'won',
-      cashoutMultiplier: b.multiplier
-    })),
-    history: live.history || [1.45, 2.80, 1.10, 14.50, 3.20, 1.95, 5.80, 1.05, 32.10, 2.15, 8.40, 1.72]
-  });
 });
 
-router.post('/game-control/aviator/crash-now', authenticateToken, requireAdmin, async (req, res) => {
-  const crashEngine = req.app.get('crashEngine');
-  if (crashEngine) {
-    crashEngine.manualCrashNow();
+router.post('/game-control/aviator/emergency-stop', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await engine.emergencyStop();
+    res.json({ success: true, ...r, message: `Round #${r.roundId} stopped. All open bets in this round will be refunded.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  await db.updateGameSettings({ crashNowTriggered: Date.now() });
-  res.json({ success: true, message: 'Emergency Crash Now triggered for active/upcoming flight!' });
 });
 
-router.post('/game-control/aviator/set-multiplier', authenticateToken, requireAdmin, async (req, res) => {
-  const { multiplier } = req.body;
-  const num = parseFloat(multiplier);
-  if (isNaN(num) || num < 1.01) {
-    return res.status(400).json({ error: 'Valid multiplier >= 1.01 required' });
+router.post('/game-control/aviator/pause', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await engine.pause();
+    res.json({ success: true, ...r, message: `Game will pause after round #${r.pauseAfterRound} finishes.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  const crashEngine = req.app.get('crashEngine');
-  if (crashEngine) {
-    crashEngine.setForcedNextMultiplier(num);
-  }
-  await db.updateGameSettings({ forcedNextMultiplier: num });
-  res.json({ success: true, forcedMultiplier: num, message: `Next round forced to crash at ${num}x` });
 });
 
-router.post('/game-control/aviator/mode', authenticateToken, requireAdmin, async (req, res) => {
-  const { mode } = req.body;
-  if (!['fair', 'house_win', 'high_run'].includes(mode)) {
-    return res.status(400).json({ error: 'Invalid mode. Use: fair, house_win, high_run' });
+router.post('/game-control/aviator/resume', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await engine.resume();
+    res.json({ success: true, ...r, message: `Game resumed. Next round #${r.nextRoundId}.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  const crashEngine = req.app.get('crashEngine');
-  if (crashEngine) {
-    try { crashEngine.setRiggingMode(mode); } catch (e) {}
-  }
-  await db.updateGameSettings({ aviatorMode: mode });
-  res.json({ success: true, riggingMode: mode, message: `Aviator mode set to: ${mode}` });
 });
 
-// 2. Mines Real-Time Game Control & Rigging
-router.get('/game-control/mines', authenticateToken, requireAdmin, (req, res) => {
-  res.json(getActiveMinesSessions());
-});
-
-router.post('/game-control/mines/rig', authenticateToken, requireAdmin, (req, res) => {
-  const { mode, userId, forceBomb } = req.body;
-  const result = setMinesRigging(mode, userId, forceBomb);
-  res.json(result);
+router.post('/game-control/aviator/house-edge', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const r = await engine.setHouseEdge(req.body?.edge);
+    res.json({ success: true, ...r, message: `House edge ${r.edge}% (RTP ${100 - r.edge}%) from round #${r.fromRound}.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -1,39 +1,35 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const db = require('../db');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'luckywin_secret_jwt_key_2026';
 
-// Middleware to authenticate JWT
+// SECURITY: the repository is public, so the secret must come from the environment.
+function resolveJwtSecret() {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (process.env.VERCEL) {
+    // Last-resort: derive from another server-only secret so it is never public.
+    const base = process.env.BLOB_READ_WRITE_TOKEN || process.env.AVIATOR_SECRET;
+    if (base) return crypto.createHash('sha256').update(`jwt:${base}`).digest('hex');
+    throw new Error('JWT_SECRET is not configured');
+  }
+  return 'local-dev-only-jwt-secret';
+}
+const JWT_SECRET = resolveJwtSecret();
+
+// Middleware to authenticate JWT (only real signed tokens are accepted)
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Access token required' });
 
-  // Support local fallback token authentication for demo
-  if (token.startsWith('local_token_')) {
-    const userId = token.replace('local_token_', '');
-    let user = db.findUserById(userId);
-    if (!user && userId === 'usr_demo') {
-      user = db.findUserByUsername('LuckyPlayer');
-    }
-    if (!user && db.syncWithCloud) {
-      await db.syncWithCloud();
-      user = db.findUserById(userId);
-    }
-    if (user && !user.isBanned) {
-      req.user = user;
-      return next();
-    }
-  }
-
   jwt.verify(token, JWT_SECRET, async (err, decoded) => {
-    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
+    if (err) return res.status(401).json({ error: 'Session expired, please log in again' });
     let user = db.findUserById(decoded.id);
     if (!user && db.syncWithCloud) {
-      await db.syncWithCloud();
+      await db.syncWithCloud(true);
       user = db.findUserById(decoded.id);
     }
     if (!user || user.isBanned) return res.status(403).json({ error: 'User banned or not found' });
@@ -131,17 +127,17 @@ router.post('/login', async (req, res) => {
 
     const cleanUser = (user.username || '').trim().toLowerCase();
     const cleanEmail = (user.email || '').trim().toLowerCase();
-    const isMasterAdmin = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') &&
-      (password === 'SkyWin#Saqib2026!' || password === 'admin123');
-    const isDemoUser = (cleanUser === 'luckyplayer' || cleanEmail === 'player@example.com') && password === 'user123';
+    const isSuperAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com');
+    const envAdminPassword = process.env.ADMIN_PASSWORD || '';
 
+    // No hardcoded passwords: super admin uses the ADMIN_PASSWORD env var, everyone else bcrypt.
     let match = false;
-    if (isMasterAdmin || isDemoUser) {
-      match = true;
+    if (isSuperAdminAccount && envAdminPassword) {
+      const a = Buffer.from(password);
+      const b = Buffer.from(envAdminPassword);
+      match = a.length === b.length && crypto.timingSafeEqual(a, b);
     } else if (user.passwordHash) {
       match = bcrypt.compareSync(password, user.passwordHash);
-    } else if (user.password) {
-      match = user.password === password;
     }
 
     if (!match) {
@@ -202,38 +198,31 @@ router.post('/login', async (req, res) => {
 // Google OAuth & 1-Click Sign-In
 router.post('/google', async (req, res) => {
   try {
-    const { credential, email: rawEmail, name: rawName, picture: rawPic } = req.body;
-    let email = (rawEmail || '').trim().toLowerCase();
-    let name = (rawName || '').trim();
-    let picture = (rawPic || '').trim();
+    const { credential } = req.body || {};
+    let email = '';
+    let name = '';
+    let picture = '';
 
-    // 1. If Google ID token (JWT) is provided, verify via Google OAuth API
-    if (credential && typeof credential === 'string') {
-      try {
-        const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
-        if (googleRes.ok) {
-          const googleData = await googleRes.json();
-          if (googleData.email) {
-            email = googleData.email.trim().toLowerCase();
-            name = googleData.name || googleData.given_name || name || email.split('@')[0];
-            picture = googleData.picture || picture;
-          }
-        } else {
-          // If tokeninfo returned non-ok (e.g. simulated or base64 token), attempt payload decode
-          const parts = credential.split('.');
-          if (parts.length === 3) {
-            const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-            if (decoded && decoded.email) {
-              email = decoded.email.trim().toLowerCase();
-              name = decoded.name || decoded.given_name || name || email.split('@')[0];
-              picture = decoded.picture || picture;
-            }
-          }
-        }
-      } catch (tokenErr) {
-        console.warn('Google token verification error:', tokenErr.message);
-      }
+    // SECURITY: only a Google-signed ID token is accepted. The old "type your Gmail"
+    // path let anyone log into ANY account (including admin) with just an email.
+    if (!credential || typeof credential !== 'string') {
+      return res.status(400).json({ error: 'Google sign-in is not available. Please log in with username and password.' });
     }
+    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+    if (!googleRes.ok) {
+      return res.status(401).json({ error: 'Google sign-in could not be verified' });
+    }
+    const googleData = await googleRes.json();
+    const expectedAud = process.env.GOOGLE_CLIENT_ID;
+    if (!expectedAud || googleData.aud !== expectedAud) {
+      return res.status(401).json({ error: 'Google sign-in is not configured for this site' });
+    }
+    if (!googleData.email || String(googleData.email_verified) !== 'true') {
+      return res.status(401).json({ error: 'Google account email is not verified' });
+    }
+    email = googleData.email.trim().toLowerCase();
+    name = googleData.name || googleData.given_name || email.split('@')[0];
+    picture = googleData.picture || '';
 
     // 2. Validate email
     if (!email || !email.includes('@')) {

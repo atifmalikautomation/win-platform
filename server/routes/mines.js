@@ -23,6 +23,10 @@ function calculateMinesMultiplier(totalTiles, minesCount, revealedCount, houseEd
 
 // Start a new Mines Game
 router.post('/start', authenticateToken, async (req, res) => {
+  // Mines is temporarily disabled ("Coming Soon"). Only Aviator is live.
+  if (process.env.ENABLE_MINES !== 'true') {
+    return res.status(403).json({ error: 'Mines is coming soon. Only Aviator is available right now.' });
+  }
   try {
     const { betAmount, minesCount = 3 } = req.body;
     const numBet = Number(betAmount);

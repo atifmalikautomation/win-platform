@@ -220,127 +220,43 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
     fetchAdminData();
   }, []);
 
-  // Poll real-time game status when game_controls tab is active
+  // Poll live Aviator status when the Aviator tab is open
   useEffect(() => {
     if (activeTab !== 'game_controls') return;
-
-    const fetchGameControlData = async () => {
+    let alive = true;
+    const fetchStatus = async () => {
       try {
         const token = localStorage.getItem('luckywin_token');
-        const headers = { Authorization: `Bearer ${token}` };
-
-        const [aviatorRes, minesRes] = await Promise.all([
-          fetch('/api/admin/game-control/aviator', { headers }),
-          fetch('/api/admin/game-control/mines', { headers })
-        ]);
-
-        if (aviatorRes.ok) {
-          const avData = await aviatorRes.json();
-          setAviatorStatus(avData);
-        }
-        if (minesRes.ok) {
-          const mData = await minesRes.json();
-          setMinesStatus(mData);
-        }
-      } catch (err) {
-        console.error('Error polling game controls:', err);
-      }
+        const res = await fetch(`/api/admin/game-control/aviator?_t=${Date.now()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store'
+        });
+        if (res.ok && alive) setAviatorStatus(await res.json());
+      } catch (err) {}
     };
-
-    fetchGameControlData();
-    const interval = setInterval(fetchGameControlData, 800);
-    return () => clearInterval(interval);
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 1000);
+    return () => { alive = false; clearInterval(interval); };
   }, [activeTab]);
 
-  const handleCrashNow = async () => {
+  const aviatorAction = async (path, body, confirmText) => {
+    if (confirmText && !window.confirm(confirmText)) return;
     try {
       const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/admin/game-control/aviator/crash-now', {
+      const res = await fetch(`/api/admin/game-control/aviator/${path}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: body ? JSON.stringify(body) : undefined
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `🚨 ${data.message}` });
-        setTimeout(() => setMessage(null), 3000);
+        setMessage({ type: 'success', text: data.message });
       } else {
-        alert(data.error || 'Failed to trigger crash');
+        setMessage({ type: 'error', text: data.error || 'Action failed' });
       }
+      setTimeout(() => setMessage(null), 4000);
     } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleSetForcedMultiplier = async (val) => {
-    const target = val || forcedMultiplierInput;
-    if (!target) return;
-    try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/admin/game-control/aviator/set-multiplier', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ multiplier: target })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setForcedMultiplierInput('');
-        setMessage({ type: 'success', text: `🎯 ${data.message}` });
-        setTimeout(() => setMessage(null), 3000);
-      } else {
-        alert(data.error || 'Failed to set multiplier');
-      }
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleSetAviatorMode = async (mode) => {
-    try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/admin/game-control/aviator/mode', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ mode })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage({ type: 'success', text: `⚙️ ${data.message}` });
-        setTimeout(() => setMessage(null), 3000);
-      }
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleSetMinesRigging = async (mode, targetUserId = null, forceBomb = false) => {
-    try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/admin/game-control/mines/rig', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ mode, userId: targetUserId, forceBomb })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage({
-          type: 'success',
-          text: forceBomb
-            ? `💣 Forced bomb activated on next click for player!`
-            : `⚙️ Mines rigging policy updated to: ${mode}`
-        });
-        setTimeout(() => setMessage(null), 3000);
-      }
-    } catch (err) {
-      alert(err.message);
+      setMessage({ type: 'error', text: err.message });
     }
   };
 
@@ -348,19 +264,26 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
     e.preventDefault();
     try {
       const token = localStorage.getItem('luckywin_token');
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
       const res = await fetch('/api/admin/settings', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
+        headers,
         body: JSON.stringify(settings)
       });
       await res.json();
-      if (res.ok) {
-        setMessage({ type: 'success', text: 'Game Settings & House Edge updated successfully!' });
-        setTimeout(() => setMessage(null), 3000);
+      // House edge for Aviator applies from the NEXT round and is shown publicly as RTP.
+      const edgeRes = await fetch('/api/admin/game-control/aviator/house-edge', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ edge: Number(settings.houseEdge) })
+      });
+      const edgeData = await edgeRes.json();
+      if (res.ok && edgeRes.ok) {
+        setMessage({ type: 'success', text: `Settings saved. ${edgeData.message}` });
+      } else {
+        setMessage({ type: 'error', text: edgeData.error || 'Could not save settings' });
       }
+      setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
     }
@@ -644,7 +567,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           }`}
         >
           <Flame className="w-4 h-4 text-amber-300" />
-          Live Game Controls
+          Aviator Live
           <span className="bg-rose-500/80 text-white text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">
             Live
           </span>
@@ -764,284 +687,148 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
         </div>
       )}
 
-      {/* TAB: LIVE GAME CONTROLS & RIGGING (AVIATOR & MINES) */}
-      {activeTab === 'game_controls' && (
-        <div className="space-y-6">
-          
-          {/* ================= 1. AVIATOR CONTROLS ================= */}
-          <div className="bg-[#0e131f] border border-rose-500/30 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center font-bold">
-                  <Flame className="w-5 h-5" />
+      {/* TAB: AVIATOR LIVE OPERATIONS (no crash-point control) */}
+      {activeTab === 'game_controls' && (() => {
+        const s = aviatorStatus;
+        const paused = s?.state === 'PAUSED';
+        const pausing = s?.control?.pauseAfterRound != null && !paused;
+        const liveMult = s?.state === 'FLYING' ? `${Number(s.multiplier).toFixed(2)}x`
+          : s?.state === 'WAITING' ? `Take-off in ${Number(s.countdown || 0).toFixed(1)}s`
+          : s?.state === 'CRASHED' ? (s.voided ? 'Stopped (refunded)' : `Crashed @ ${Number(s.crashAt).toFixed(2)}x`)
+          : paused ? 'Paused' : 'Connecting…';
+        return (
+          <div className="space-y-5">
+            <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center justify-center">
+                    <Flame className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-black text-white">Aviator Live Operations</h2>
+                    <p className="text-xs text-slate-400">Same round for every player · provably fair · RTP {s?.rtp ?? '—'}%</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                    Aviator Real-Time Crash Control
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase font-mono ${
-                      aviatorStatus?.state === 'FLYING'
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse'
-                        : aviatorStatus?.state === 'WAITING'
-                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
-                        : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                    }`}>
-                      {aviatorStatus?.state || 'CONNECTING...'}
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Live flight status, instant manual crash trigger, and round multiplier override
+                <span className={`px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider border ${
+                  s?.state === 'FLYING' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : s?.state === 'WAITING' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : paused ? 'bg-slate-500/15 text-slate-300 border-slate-500/30'
+                    : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                }`}>
+                  {s?.state || '…'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                  <div className="text-[10px] uppercase text-slate-500 font-bold">Round</div>
+                  <div className="text-lg font-black text-white font-mono">#{s?.roundId ?? '—'}</div>
+                </div>
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                  <div className="text-[10px] uppercase text-slate-500 font-bold">Live</div>
+                  <div className="text-lg font-black text-white font-mono">{liveMult}</div>
+                </div>
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                  <div className="text-[10px] uppercase text-slate-500 font-bold">Bets this round</div>
+                  <div className="text-lg font-black text-white font-mono">{s?.roundTotals?.count ?? 0} · PKR {(s?.roundTotals?.wagered ?? 0).toLocaleString()}</div>
+                </div>
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                  <div className="text-[10px] uppercase text-slate-500 font-bold">Paid out this round</div>
+                  <div className="text-lg font-black text-emerald-300 font-mono">PKR {(s?.roundTotals?.paid ?? 0).toLocaleString()}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-4 space-y-2">
+                  <h3 className="text-sm font-black text-rose-200 flex items-center gap-2"><AlertOctagon className="w-4 h-4" /> Emergency Stop</h3>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Turant current round band karta hai. Is round ki <strong>har open bet ka poora paisa wapas</strong> hota hai.
+                    Players ko "Round stopped — bets refunded" dikhega. Sirf technical/emergency masle ke liye.
                   </p>
-                </div>
-              </div>
-
-              {/* Current Multiplier Display */}
-              <div className="bg-[#090c13] border border-slate-800 px-4 py-2 rounded-2xl flex items-center gap-4">
-                <div>
-                  <span className="text-[10px] text-slate-500 uppercase block font-semibold">Live Multiplier</span>
-                  <span className="text-2xl font-black font-mono text-white tracking-wider">
-                    {aviatorStatus?.state === 'FLYING'
-                      ? `${aviatorStatus?.currentMultiplier}x`
-                      : aviatorStatus?.state === 'WAITING'
-                      ? `${aviatorStatus?.countdown}s (wait)`
-                      : `${aviatorStatus?.crashedAt}x (crashed)`}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 uppercase block font-semibold">Active Bets</span>
-                  <span className="text-sm font-bold font-mono text-cyan-400">
-                    {aviatorStatus?.totalBets || 0} ({aviatorStatus?.realBets?.length || 0} players)
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* EMERGENCY CRASH NOW BUTTON */}
-            <div className="bg-gradient-to-r from-rose-950/40 via-red-900/20 to-[#0e131f] border border-rose-500/40 p-5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="space-y-1 text-center sm:text-left">
-                <span className="text-sm font-black text-rose-300 uppercase tracking-wide flex items-center justify-center sm:justify-start gap-1.5">
-                  <AlertOctagon className="w-4 h-4 text-rose-400" />
-                  Manual Flight Interception
-                </span>
-                <p className="text-xs text-slate-400">
-                  {aviatorStatus?.state === 'FLYING'
-                    ? 'Plane is currently in mid-air flight! Click below to immediately trigger an instant bust crash.'
-                    : 'Plane is not flying right now. Clicking will force the upcoming flight to crash immediately upon takeoff (1.01x).'}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleCrashNow}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-black text-sm tracking-wide shadow-lg shadow-rose-600/30 active:scale-95 transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
-              >
-                <Flame className="w-5 h-5 text-amber-300 animate-bounce" />
-                🚨 CRASH JAYAZ NOW!
-              </button>
-            </div>
-
-            {/* SET SPECIFIC MULTIPLIER FOR NEXT ROUND */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-[#090c13] border border-slate-800 p-4 rounded-2xl space-y-3">
-                <span className="text-xs font-bold text-slate-300 uppercase flex items-center gap-1.5">
-                  <Target className="w-4 h-4 text-cyan-400" />
-                  Force Next Round Crash Multiplier
-                </span>
-                <p className="text-[11px] text-slate-400">
-                  Pre-determine exactly at what multiplier the next flight will crash.
-                </p>
-
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1.01"
-                    value={forcedMultiplierInput}
-                    onChange={(e) => setForcedMultiplierInput(e.target.value)}
-                    placeholder="e.g. 1.15, 1.50, 2.00"
-                    className="flex-1 bg-[#121622] border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold font-mono text-white focus:outline-none focus:border-cyan-400"
-                  />
                   <button
                     type="button"
-                    onClick={() => handleSetForcedMultiplier()}
-                    className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shadow transition-colors"
+                    disabled={!s || s.state === 'CRASHED' || paused}
+                    onClick={() => aviatorAction('emergency-stop', null, 'Current round STOP karein? Is round ki sab open bets refund ho jayengi.')}
+                    className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Set Multiplier
+                    STOP ROUND & REFUND
                   </button>
                 </div>
 
-                {/* Quick Multiplier Chips */}
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {[1.05, 1.12, 1.25, 1.50, 2.00, 3.50, 5.00, 10.00].map(val => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => handleSetForcedMultiplier(val)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono font-bold text-slate-300 hover:text-white border border-slate-700 transition-colors"
-                    >
-                      {val.toFixed(2)}x
-                    </button>
-                  ))}
-                </div>
-
-                {aviatorStatus?.forcedCrashMultiplier && (
-                  <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 shrink-0" />
-                    <span>Next round locked to crash at: <strong>{aviatorStatus.forcedCrashMultiplier}x</strong></span>
-                  </div>
-                )}
-              </div>
-
-              {/* AUTOMATIC RIGGING POLICIES */}
-              <div className="bg-[#090c13] border border-slate-800 p-4 rounded-2xl space-y-3">
-                <span className="text-xs font-bold text-slate-300 uppercase flex items-center gap-1.5">
-                  <ShieldAlert className="w-4 h-4 text-amber-400" />
-                  Aviator Rigging Policy Mode
-                </span>
-                <p className="text-[11px] text-slate-400">
-                  Select a standing automated policy for ongoing rounds.
-                </p>
-
-                <div className="space-y-2">
-                  {[
-                    { id: 'fair', label: 'Provably Fair (Standard RNG)', desc: 'Natural random distribution based on house edge RTP.' },
-                    { id: 'house_win', label: 'House Win Mode (Bust 1.02x - 1.25x)', desc: 'Always crashes early so platform captures players bets.' },
-                    { id: 'high_run', label: 'High Run Bait Mode (10x - 35x)', desc: 'Allows massive flights to build hype & excitement.' }
-                  ].map(m => (
-                    <div
-                      key={m.id}
-                      onClick={() => handleSetAviatorMode(m.id)}
-                      className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                        aviatorStatus?.riggingMode === m.id
-                          ? 'bg-[#151c2e] border-amber-500 text-white shadow-sm'
-                          : 'bg-[#0e121a] border-slate-800 text-slate-400 hover:bg-[#121622]'
-                      }`}
-                    >
-                      <div>
-                        <div className="text-xs font-bold text-white leading-tight">{m.label}</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">{m.desc}</div>
-                      </div>
-                      <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ml-2 ${
-                        aviatorStatus?.riggingMode === m.id ? 'border-amber-500 bg-amber-500' : 'border-slate-700'
-                      }`} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* ================= 2. MINES CONTROLS ================= */}
-          <div className="bg-[#0e131f] border border-amber-500/30 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold">
-                  <Bomb className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                    Mines Game Control & Radar Rigging
-                    <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-black uppercase font-mono">
-                      {minesStatus?.sessions?.length || 0} Active Players
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Live player board radar, hidden mine inspector, and instant kill-switch bomb trigger
+                <div className="bg-slate-900/60 border border-slate-700 rounded-2xl p-4 space-y-2">
+                  <h3 className="text-sm font-black text-white">Pause / Resume</h3>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Pause karne par current round normal khatam hoga, phir naye rounds shuru nahi honge (maintenance ke liye).
                   </p>
+                  {paused || pausing ? (
+                    <button
+                      type="button"
+                      onClick={() => aviatorAction('resume')}
+                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs"
+                    >
+                      {pausing ? `Pausing after #${s.control.pauseAfterRound} — RESUME instead` : 'RESUME GAME'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!s}
+                      onClick={() => aviatorAction('pause', null, 'Current round ke baad game pause karein?')}
+                      className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs disabled:opacity-40"
+                    >
+                      PAUSE AFTER THIS ROUND
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Global Policy Selector */}
-              <div className="flex items-center gap-2 bg-[#090c13] border border-slate-800 p-1 rounded-xl text-xs">
-                <span className="text-[11px] font-bold text-slate-400 pl-2">Global Policy:</span>
-                {[
-                  { id: 'fair', label: 'Fair' },
-                  { id: 'trap_click_2', label: 'Trap @ Click 2' },
-                  { id: 'trap_click_3', label: 'Trap @ Click 3' },
-                  { id: 'always_bomb', label: 'Always Bomb' }
-                ].map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleSetMinesRigging(p.id)}
-                    className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors ${
-                      minesStatus?.riggingConfig?.globalMode === p.id
-                        ? 'bg-amber-500 text-slate-950 shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-3 text-[11px] text-slate-400 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <span>
+                  Crash point har round ke seed se khud banta hai (provably fair). Admin crash point set ya force nahi kar sakta.
+                  House edge "House Edge & RTP" tab se change hota hai, agle round se lagta hai, aur players ko RTP ke taur par dikhta hai.
+                </span>
               </div>
             </div>
 
-            {/* Active Mines Sessions List */}
-            {minesStatus?.sessions?.length === 0 ? (
-              <div className="bg-[#090c13] border border-slate-800/80 rounded-2xl p-8 text-center space-y-2">
-                <Bomb className="w-8 h-8 text-slate-600 mx-auto" />
-                <p className="text-xs font-semibold text-slate-400">No active Mines game sessions right now.</p>
-                <p className="text-[11px] text-slate-600">When players launch Mines and pick tiles, their live boards and hidden mine locations will appear here in real-time.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {minesStatus?.sessions?.map(sess => (
-                  <div key={sess.userId} className="bg-[#090c13] border border-slate-800 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-black text-white">{sess.username}</span>
-                        <span className="text-[11px] text-slate-400 block mt-0.5">
-                          Bet: <strong className="text-white">PKR {sess.betAmount}</strong> • {sess.minesCount} Mines • Multiplier: <strong className="text-[#00c638]">{sess.currentMultiplier}x</strong>
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleSetMinesRigging(null, sess.userId, !sess.isForcedBombNext)}
-                        className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow transition-all ${
-                          sess.isForcedBombNext
-                            ? 'bg-rose-600 text-white animate-pulse'
-                            : 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40'
-                        }`}
-                      >
-                        <Bomb className="w-3.5 h-3.5" />
-                        {sess.isForcedBombNext ? 'Bomb Armed on Next Click!' : 'Force Bomb on Next Click'}
-                      </button>
-                    </div>
-
-                    {/* 5x5 Minefield Radar Grid */}
-                    <div>
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold mb-1.5">
-                        Live Board Radar (Green: Revealed Safe | Red: Hidden Mine)
-                      </span>
-                      <div className="grid grid-cols-5 gap-1 w-48 mx-auto">
-                        {Array.from({ length: 25 }, (_, idx) => {
-                          const isRevealed = sess.revealedTiles.includes(idx);
-                          const isMine = sess.minePositions.includes(idx);
-                          return (
-                            <div
-                              key={idx}
-                              className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold border ${
-                                isRevealed
-                                  ? 'bg-[#00c638]/25 border-[#00c638] text-[#00c638]'
-                                  : isMine
-                                  ? 'bg-rose-500/25 border-rose-500/50 text-rose-400'
-                                  : 'bg-[#121622] border-slate-800 text-slate-600'
-                              }`}
-                              title={isMine ? 'Mine Location' : isRevealed ? 'Revealed Safe' : 'Unrevealed Safe'}
-                            >
-                              {isRevealed ? '💎' : isMine ? '💣' : idx + 1}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 shadow-xl">
+              <h3 className="text-sm font-black text-white mb-3">Real bets — round #{s?.roundId ?? '—'}</h3>
+              {!s?.realBets?.length ? (
+                <p className="text-xs text-slate-500 py-4 text-center">No bets in this round.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="text-slate-500 border-b border-slate-800">
+                        <th className="pb-2">Player</th><th className="pb-2">Bet</th><th className="pb-2">Auto</th><th className="pb-2">Status</th><th className="pb-2 text-right">Payout</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {s.realBets.map(b => (
+                        <tr key={b.id}>
+                          <td className="py-2 text-white font-semibold">{b.username}</td>
+                          <td className="py-2 font-mono">PKR {b.amount}</td>
+                          <td className="py-2 font-mono text-slate-400">{b.autoCashout ? `${b.autoCashout}x` : '—'}</td>
+                          <td className="py-2 uppercase text-[10px] font-bold">{b.status === 'won' ? <span className="text-emerald-400">won @ {Number(b.multiplier).toFixed(2)}x</span> : b.status}</td>
+                          <td className="py-2 text-right font-mono">{b.status === 'won' ? `PKR ${b.payout}` : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {s?.history?.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {s.history.slice(0, 20).map(h => (
+                    <span key={h.roundId} className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-slate-800 text-slate-200">
+                      #{h.roundId}: {h.voided ? 'STOP' : `${Number(h.crashAt).toFixed(2)}x`}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-
-        </div>
-      )}
+        );
+      })()}
 
       {/* TAB 2: HOUSE EDGE & RTP SETTINGS */}
       {activeTab === 'settings' && (
@@ -1064,7 +851,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
               <input
                 type="range"
                 min="1"
-                max="15"
+                max="10"
                 value={settings.houseEdge}
                 onChange={(e) => {
                   const edge = Number(e.target.value);

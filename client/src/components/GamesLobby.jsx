@@ -14,11 +14,11 @@ export default function GamesLobby({ onSelectGame }) {
       id: 'crash',
       title: 'Aviator X',
       category: 'crash',
-      provider: 'Spribe & SkyWin Studios',
+      provider: 'SkyWin Originals',
       rtp: '97.0%',
-      badge: 'TOP #1',
+      badge: 'LIVE NOW',
       badgeColor: 'bg-[#ff1a40] text-white',
-      multiplier: 'Up to 10,000x',
+      multiplier: 'Up to 1,000x',
       gradient: 'from-[#ff1a40]/30 via-[#2a0d16] to-[#12151d]',
       borderColor: 'border-[#ff1a40]/40 group-hover:border-[#ff1a40]',
       icon: <img src="/aviator_plane.png" alt="Aviator" className="w-10 h-7 object-contain filter drop-shadow" />,
@@ -31,13 +31,13 @@ export default function GamesLobby({ onSelectGame }) {
       category: 'fast',
       provider: 'In-House Provably Fair',
       rtp: '98.0%',
-      badge: 'POPULAR',
+      badge: 'SOON',
       badgeColor: 'bg-[#00c638] text-slate-950',
       multiplier: 'Up to 500x',
       gradient: 'from-[#00c638]/20 via-[#0e2417] to-[#12151d]',
       borderColor: 'border-[#00c638]/40 group-hover:border-[#00c638]',
       icon: <Bomb className="w-8 h-8 text-[#00c638]" />,
-      playable: true,
+      playable: false,
       description: 'Uncover sparkling green diamonds while dodging hidden mine traps.'
     },
     {
@@ -46,7 +46,7 @@ export default function GamesLobby({ onSelectGame }) {
       category: 'crash',
       provider: 'SkyWin Originals',
       rtp: '96.8%',
-      badge: 'NEW',
+      badge: 'SOON',
       badgeColor: 'bg-[#1a68ff] text-white',
       multiplier: 'Dual Drag Race',
       gradient: 'from-[#1a68ff]/20 via-[#101b33] to-[#12151d]',
@@ -61,7 +61,7 @@ export default function GamesLobby({ onSelectGame }) {
       category: 'fast',
       provider: 'Provably Fair',
       rtp: '98.5%',
-      badge: 'FAST',
+      badge: 'SOON',
       badgeColor: 'bg-[#ffb800] text-slate-950',
       multiplier: '1.98x Instant',
       gradient: 'from-[#ffb800]/20 via-[#272110] to-[#12151d]',
@@ -76,7 +76,7 @@ export default function GamesLobby({ onSelectGame }) {
       category: 'fast',
       provider: 'Smartsoft',
       rtp: '97.2%',
-      badge: 'TRENDING',
+      badge: 'SOON',
       badgeColor: 'bg-purple-500 text-white',
       multiplier: 'Up to 1,000x',
       gradient: 'from-purple-600/20 via-[#22102e] to-[#12151d]',
@@ -91,7 +91,7 @@ export default function GamesLobby({ onSelectGame }) {
       category: 'live',
       provider: 'SkyWin Live Studios',
       rtp: '97.3%',
-      badge: 'LIVE VIP',
+      badge: 'SOON',
       badgeColor: 'bg-emerald-500 text-slate-950',
       multiplier: '36x European',
       gradient: 'from-emerald-500/20 via-[#0e271e] to-[#12151d]',
@@ -222,7 +222,7 @@ export default function GamesLobby({ onSelectGame }) {
                 </button>
               ) : (
                 <span className="text-[11px] text-slate-400 font-heading font-bold bg-white/[0.05] px-2.5 py-1 rounded-lg">
-                  Releasing Soon
+                  Coming Soon
                 </span>
               )}
             </div>

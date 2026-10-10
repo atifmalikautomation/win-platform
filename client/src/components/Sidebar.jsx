@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Bomb, ShieldCheck, Gift,
+  ShieldCheck, Gift,
   X, Sliders, Gamepad2
 } from 'lucide-react';
 import { soundFx } from '../utils/soundEffects';
@@ -29,13 +29,6 @@ export default function Sidebar({
       )
     },
     {
-      id: 'mines',
-      name: 'Mines 5x5',
-      badge: 'POPULAR',
-      badgeColor: 'bg-[#00c638] text-slate-950',
-      icon: <Bomb className="w-4 h-4 text-[#00c638]" />
-    },
-    {
       id: 'lobby',
       name: 'Games Lobby',
       badge: null,
@@ -44,7 +37,7 @@ export default function Sidebar({
     {
       id: 'fair',
       name: 'Provably Fair',
-      badge: 'VERIFIED',
+      badge: null,
       badgeColor: 'bg-[#1a68ff]/20 text-[#38bdf8]',
       icon: <ShieldCheck className="w-4 h-4 text-[#38bdf8]" />,
       action: onOpenProvablyFair
@@ -107,7 +100,7 @@ export default function Sidebar({
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-heading font-black text-xs text-white">AVIATOR X</span>
-                <span className="text-[8px] bg-[#ff1a40] text-white px-1 py-0.2 rounded font-black">97%</span>
+                <span className="text-[8px] bg-[#ff1a40] text-white px-1 py-0.2 rounded font-black">LIVE</span>
               </div>
               <span className="text-[10px] text-slate-400 font-mono">Live Multiplier</span>
             </div>
@@ -157,18 +150,16 @@ export default function Sidebar({
           })}
         </div>
 
-        {/* SkyWin +500% Deposit Promo Banner */}
-        <div className="mx-3 mt-2 p-3.5 rounded-2xl bg-gradient-to-b from-[#1a233b] to-[#101625] border border-[#233150] shadow-sm text-left">
-          <div className="flex items-center gap-2 text-[#ffb800] text-xs font-black font-heading mb-1">
-            <Gift className="w-4 h-4" />
-            <span>+500% BONUS</span>
+        {/* Deposit card (no fake bonus claims) */}
+        <div className="mx-3 mt-2 p-3.5 rounded-2xl bg-gradient-to-b from-[#1a233b] to-[#101625] border border-[#233150] text-left">
+          <div className="flex items-center gap-2 text-white text-xs font-black font-heading mb-1">
+            <Gift className="w-4 h-4 text-[#00c638]" />
+            <span>JazzCash & EasyPaisa</span>
           </div>
-          <p className="text-[11px] text-slate-300 leading-tight">
-            Get up to <strong className="text-white">PKR 150,000</strong> on your first deposits!
-          </p>
+          <p className="text-[11px] text-slate-300 leading-tight">Deposits are credited after admin verification.</p>
           <button
             onClick={() => onOpenCashier('deposit')}
-            className="mt-2.5 w-full py-2 rounded-xl bg-[#00c638] hover:bg-[#00db3e] text-slate-950 font-heading font-black text-xs transition-colors shadow-sm"
+            className="mt-2.5 w-full py-2 rounded-xl bg-[#00c638] hover:bg-[#00db3e] text-slate-950 font-heading font-black text-xs transition-colors"
           >
             Deposit Now
           </button>

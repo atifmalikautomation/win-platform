@@ -76,24 +76,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
     };
     localStorage.setItem('luckywin_active_user', JSON.stringify(userWithMeta));
 
-    const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-    const idx = savedUsers.findIndex(u =>
-      u.id === userWithMeta.id ||
-      (u.username && u.username.trim().toLowerCase() === userWithMeta.username.trim().toLowerCase()) ||
-      (u.email && u.email.trim().toLowerCase() === (userWithMeta.email || '').trim().toLowerCase())
-    );
 
-    const userToSave = {
-      ...userWithMeta,
-      ...(userPassword ? { password: userPassword } : {})
-    };
-
-    if (idx !== -1) {
-      savedUsers[idx] = { ...savedUsers[idx], ...userToSave };
-    } else {
-      savedUsers.unshift(userToSave);
-    }
-    localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
 
     if (onAuthSuccess) {
       onAuthSuccess(userWithMeta);
@@ -169,32 +152,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
       }
       saveUserSession(data);
     } catch (err) {
-      // Local fallback in case of transient network disruption
-      const cleanEmail = googleEmailInput.trim().toLowerCase();
-      const baseName = cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
-      const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-      let localFound = savedUsers.find(u => u.email && u.email.toLowerCase() === cleanEmail);
-      const nowIso = new Date().toISOString();
-      if (!localFound) {
-        localFound = {
-          id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          username: baseName || `user_${Date.now().toString().slice(-4)}`,
-          email: cleanEmail,
-          role: (cleanEmail === '60secscriptdoc@gmail.com' || baseName === 'saqib_admin') ? 'admin' : 'user',
-          balance: 0.0,
-          bonusBalance: 0.0,
-          authProvider: 'google',
-          provider: 'google',
-          createdAt: nowIso,
-          lastLogin: nowIso
-        };
-        savedUsers.unshift(localFound);
-      } else {
-        localFound.lastLogin = nowIso;
-        localFound.authProvider = 'google';
-      }
-      localStorage.setItem('luckywin_local_users', JSON.stringify(savedUsers));
-      saveUserSession({ token: `local_token_${localFound.id}`, user: localFound });
+      setError(err.message || 'Google authentication failed');
     } finally {
       setLoading(false);
     }
@@ -257,85 +215,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
         return;
       }
 
-      // If server returned an error, check local storage fallback
-      const savedUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-
-      if (mode === 'login') {
-        const cleanId = cleanUsername.toLowerCase();
-        let userFound = savedUsers.find(u =>
-          ((u.username && u.username.trim().toLowerCase() === cleanId) ||
-           (u.email && u.email.trim().toLowerCase() === cleanId)) &&
-          u.password === cleanPassword
-        );
-
-        // Support default demo and admin accounts
-        if (!userFound && (cleanId === 'luckyplayer' || cleanId === 'player@example.com') && cleanPassword === 'user123') {
-          userFound = {
-            id: 'usr_demo',
-            username: 'LuckyPlayer',
-            email: 'player@example.com',
-            role: 'user',
-            balance: 0.0,
-            bonusBalance: 0.0
-          };
-        } else if (!userFound && (cleanId === 'saqib_admin' || cleanId === '60secscriptdoc@gmail.com') && (cleanPassword === 'SkyWin#Saqib2026!' || cleanPassword === 'admin123')) {
-          if (!isAdminMode) {
-            throw new Error('⚠️ Super Admin account player login se allow nahi hai. Pehly neechay "Super Admin Portal Login" par click karein.');
-          }
-          userFound = {
-            id: 'usr_saqib_admin',
-            username: 'saqib_admin',
-            email: '60secscriptdoc@gmail.com',
-            role: 'admin',
-            balance: 100000.0,
-            bonusBalance: 0.0
-          };
-        }
-
-        if (userFound) {
-          saveUserSession({ token: `local_token_${userFound.id}`, user: userFound }, cleanPassword);
-
-          // Background sync to server so server learns about this local account
-          fetch('/api/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              username: userFound.username,
-              email: userFound.email || `${userFound.username}@player.skywin`,
-              password: cleanPassword
-            })
-          }).catch(() => {});
-
-          return;
-        }
-
-        throw new Error(serverError || 'Invalid username or password');
-      } else {
-        // mode === 'register'
-        if (cleanUsername.length < 3) throw new Error('Username must be at least 3 characters');
-        if (cleanPassword.length < 4) throw new Error('Password must be at least 4 characters');
-        if (savedUsers.some(u => u.username && u.username.trim().toLowerCase() === cleanUsername.toLowerCase())) {
-          throw new Error('Username already taken');
-        }
-        if (savedUsers.some(u => u.email && u.email.trim().toLowerCase() === cleanEmail)) {
-          throw new Error('Email already registered');
-        }
-
-        const nowIso = new Date().toISOString();
-        const newUser = {
-          id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          username: cleanUsername,
-          email: cleanEmail,
-          role: 'user',
-          balance: 0.0,
-          bonusBalance: 0.0,
-          authProvider: cleanEmail.includes('@gmail.com') ? 'google' : 'email',
-          createdAt: nowIso,
-          lastLogin: nowIso
-        };
-
-        saveUserSession({ token: `local_token_${newUser.id}`, user: newUser }, cleanPassword);
-      }
+      throw new Error(serverError || 'Authentication failed');
     } catch (err) {
       setError(err.message || 'Authentication failed');
     } finally {
@@ -440,7 +320,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
         )}
 
         {/* Google 1-Click Sign-In Section (Player Mode) */}
-        {!isAdminMode && (
+        {!isAdminMode && import.meta.env.VITE_GOOGLE_CLIENT_ID && (
           <div className="mb-5">
             <button
               type="button"
@@ -452,55 +332,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
               <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
             </button>
 
-            {/* Instant Google Email Input Card */}
-            {showGooglePrompt && (
-              <div className="mt-3 p-4 rounded-2xl bg-gradient-to-b from-[#192238] to-[#0f1422] border border-blue-500/40 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <GoogleIcon />
-                    <span className="text-xs font-black text-white">Google 1-Click Access</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { setShowGooglePrompt(false); setError(''); }}
-                    className="text-slate-400 hover:text-white p-1"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-300 mb-3 leading-relaxed">
-                  Apna Gmail address enter karein. Password ki zarurat nahi, 1-Click direct login / sign up ho jayega:
-                </p>
-                <form onSubmit={handleGoogleInstantSubmit} className="space-y-2.5">
-                  <input
-                    type="email"
-                    required
-                    autoFocus
-                    value={googleEmailInput}
-                    onChange={(e) => setGoogleEmailInput(e.target.value)}
-                    placeholder="example@gmail.com"
-                    className="w-full bg-slate-900 border border-blue-500/50 focus:border-blue-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition-colors"
-                  />
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="flex-1 py-2 rounded-xl bg-[#1a68ff] hover:bg-blue-500 text-white font-bold text-xs shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      <GoogleIcon />
-                      <span>{loading ? 'Authenticating...' : 'Continue with Google'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setShowGooglePrompt(false); setError(''); }}
-                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
+
 
             <div className="relative flex items-center justify-center my-4">
               <div className="border-t border-[#232f48] w-full" />

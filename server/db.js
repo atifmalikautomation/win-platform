@@ -1,14 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const blobStore = require('./blobStore');
 
-const DB_PATH = process.env.VERCEL
-  ? path.join('/tmp', 'data.json')
-  : path.join(__dirname, 'data.json');
+const DB_PATH = process.env.SKYWIN_DB_PATH
+  || (process.env.VERCEL ? path.join('/tmp', 'data.json') : path.join(__dirname, 'data.json'));
 
-const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || 'vercel_blob_rw_qhXj3ttyZwbZkgcA_2FxtXpfjdZR4CkC3sNv2WmqVjBID97';
+// Token comes ONLY from the environment (the repository is public).
 const BLOB_FILE_NAME = 'skywin-database.json';
-const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0b68e3a7539c1';
 
 let memoryCache = null;
 let lastCloudSync = 0;
@@ -28,86 +27,32 @@ async function syncWithCloud(force = false) {
     return memoryCache;
   }
 
-  // 1. Primary: Official Vercel Private Blob Storage with absolute CDN cache-busting
-  try {
-    const cacheBusterUrl = `https://qhxj3ttyzwbzkgca.private.blob.vercel-storage.com/${BLOB_FILE_NAME}?download=1&_t=${now}`;
-    const res = await fetch(cacheBusterUrl, {
-      headers: {
-        Authorization: `Bearer ${BLOB_TOKEN}`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
-      },
-      cache: 'no-store'
-    });
-    if (res.ok) {
-      const json = await res.json();
-      if (json && Array.isArray(json.users) && json.users.length > 0) {
-        // Guard: If a local write occurred while the fetch was in flight, do not overwrite!
-        if (now - lastLocalWrite < 1500 && memoryCache) {
-          return memoryCache;
-        }
-        if (!Array.isArray(json.transactions)) json.transactions = [];
-        if (!Array.isArray(json.bets)) json.bets = [];
-        if (!json.stats) json.stats = { totalWagered: 0, totalPayouts: 0, grossGamingRevenue: 0 };
-        memoryCache = json;
-        lastCloudSync = now;
-        try {
-          fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
-        } catch (e) {}
-        return memoryCache;
-      }
+  // Vercel Private Blob (single source of truth)
+  const res = await blobStore.readJson(BLOB_FILE_NAME);
+  if (res.ok && res.data && Array.isArray(res.data.users) && res.data.users.length > 0) {
+    const json = res.data;
+    // Guard: If a local write occurred while the fetch was in flight, do not overwrite!
+    if (Date.now() - lastLocalWrite < 1500 && memoryCache) {
+      return memoryCache;
     }
-  } catch (err) {
-    console.warn('Vercel Blob cache-busted sync attempt:', err.message);
-  }
-
-  // 2. Secondary redundant cloud backup (only if memoryCache is empty!)
-  if (!memoryCache || !Array.isArray(memoryCache.users) || memoryCache.users.length <= 2) {
+    if (!Array.isArray(json.transactions)) json.transactions = [];
+    if (!Array.isArray(json.bets)) json.bets = [];
+    if (!json.stats) json.stats = { totalWagered: 0, totalPayouts: 0, grossGamingRevenue: 0 };
+    memoryCache = json;
+    lastCloudSync = now;
     try {
-      const res = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.data && Array.isArray(json.data.users)) {
-          if (!Array.isArray(json.data.transactions)) json.data.transactions = [];
-          if (!Array.isArray(json.data.bets)) json.data.bets = [];
-          if (!json.data.stats) json.data.stats = { totalWagered: 0, totalPayouts: 0, grossGamingRevenue: 0 };
-          memoryCache = json.data;
-          lastCloudSync = now;
-          try {
-            fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
-          } catch (e) {}
-          return memoryCache;
-        }
-      }
+      fs.writeFileSync(DB_PATH, JSON.stringify(memoryCache), 'utf8');
     } catch (e) {}
+    return memoryCache;
   }
 
   return memoryCache || readDB();
 }
 
 async function pushToCloud(data) {
-  // 1. Primary: Save to Vercel Private Blob
-  try {
-    const { put } = require('@vercel/blob');
-    await put(BLOB_FILE_NAME, JSON.stringify(data, null, 2), {
-      access: 'private',
-      token: BLOB_TOKEN,
-      addRandomSuffix: false,
-      allowOverwrite: true
-    });
-  } catch (err) {
-    console.error('Vercel Blob push error:', err.message);
-  }
-
-  // 2. Secondary redundant backup
-  try {
-    const payload = JSON.stringify({ name: 'skywin_database', data });
-    await fetch(CLOUD_DB_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload
-    });
-  } catch (e) {}
+  // NOTE: the old public restful-api.dev "backup" was removed: anyone on the
+  // internet could read (emails, password hashes) or overwrite it.
+  await blobStore.writeJson(BLOB_FILE_NAME, data);
 }
 
 // Initialize database structure
@@ -137,7 +82,7 @@ function initDB() {
     }
   }
 
-  const defaultAdminPassword = bcrypt.hashSync('SkyWin#Saqib2026!', 10);
+  const defaultAdminPassword = bcrypt.hashSync(process.env.ADMIN_PASSWORD || require('crypto').randomBytes(24).toString('hex'), 10);
   const defaultUserPassword = bcrypt.hashSync('user123', 10);
 
   const initialData = {
@@ -446,162 +391,221 @@ function getTransactions(userId = null) {
   return list;
 }
 
-// Atomic Aviator Bet Placement (Single cloud sync + single cloud write, zero race conditions)
-// Atomic Aviator Bet Placement (Single cloud sync + single cloud write, zero race conditions)
-async function placeBetTransaction({ userId, username, betAmount, autoCashout }) {
-  if (syncWithCloud) await syncWithCloud(true);
-  const db = readDB();
-  const user = db.users.find(u => u.id === userId);
-  if (!user) throw new Error('User not found');
+// ==================== AVIATOR BETS (round-aware) ====================
+// Every bet is tied to a roundId. Finished rounds are settled from the global
+// engine's real result (voided round = refund, autoCashout honoured server-side).
 
-  const numAmount = Number(betAmount);
-  if (isNaN(numAmount) || numAmount < 10) {
-    throw new Error('Minimum bet is PKR 10');
-  }
+function round2(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
 
-  const currentBal = Number(user.balance || 0);
-  if (currentBal < numAmount) {
-    throw new Error('Insufficient balance');
-  }
-
-  const newBalance = Math.max(0, Math.round((currentBal - numAmount) * 100) / 100);
-  user.balance = newBalance;
-  user.balanceUpdatedAt = Date.now();
-  user.version = (user.version || 0) + 1;
-
+function ensureCollections(db) {
   if (!Array.isArray(db.bets)) db.bets = [];
   if (!db.stats) db.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
+}
+
+function recalcGgr(db) {
+  db.stats.grossGamingRevenue = round2((db.stats.totalWagered || 0) - (db.stats.totalPayouts || 0));
+}
+
+function touchBalance(user, newBalance) {
+  user.balance = round2(Math.max(0, newBalance));
+  user.balanceUpdatedAt = Date.now();
+  user.version = (user.version || 0) + 1;
+}
+
+// Settles a user's finished aviator bets inside an already-loaded db object.
+// Returns true when something changed.
+function settleAviatorBetsInDb(db, userId, getRoundResult) {
+  ensureCollections(db);
+  const user = db.users.find(u => u.id === userId);
+  if (!user || typeof getRoundResult !== 'function') return false;
+  let modified = false;
+  for (const b of db.bets) {
+    if (b.game !== 'aviator' || b.userId !== userId || b.status !== 'placed') continue;
+    if (b.roundId == null) {
+      // Legacy bet from the old engine: no round link, cannot be verified.
+      b.status = 'lost';
+      modified = true;
+      continue;
+    }
+    const result = getRoundResult(b.roundId);
+    if (!result) continue; // round not finished yet
+    if (result.voided) {
+      b.status = 'refunded';
+      b.settledAt = new Date().toISOString();
+      touchBalance(user, Number(user.balance || 0) + b.betAmount);
+      db.stats.totalWagered = round2(Math.max(0, (db.stats.totalWagered || 0) - b.betAmount));
+    } else if (b.autoCashout && result.crashAt >= b.autoCashout) {
+      const payout = round2(b.betAmount * b.autoCashout);
+      b.status = 'won';
+      b.multiplier = b.autoCashout;
+      b.payout = payout;
+      b.settledAt = new Date().toISOString();
+      touchBalance(user, Number(user.balance || 0) + payout);
+      db.stats.totalPayouts = round2((db.stats.totalPayouts || 0) + payout);
+    } else {
+      b.status = 'lost';
+      b.crashAt = result.crashAt;
+      b.settledAt = new Date().toISOString();
+    }
+    modified = true;
+  }
+  if (modified) recalcGgr(db);
+  return modified;
+}
+
+async function settleUserAviatorBets(userId, getRoundResult) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  if (settleAviatorBetsInDb(db, userId, getRoundResult)) {
+    await writeDB(db);
+  }
+  const user = db.users.find(u => u.id === userId);
+  return user ? Number(user.balance || 0) : 0;
+}
+
+function hasOpenAviatorBets(userId) {
+  const db = readDB();
+  return Array.isArray(db.bets) && db.bets.some(b => b.game === 'aviator' && b.userId === userId && b.status === 'placed');
+}
+
+async function placeBetTransaction({ userId, betAmount, autoCashout, roundId, getRoundResult, minBet = 10, maxBet = 50000 }) {
+  if (syncWithCloud) await syncWithCloud(true);
+  const db = readDB();
+  ensureCollections(db);
+  const user = db.users.find(u => u.id === userId);
+  if (!user) throw new Error('User not found');
+  if (roundId == null) throw new Error('No active round');
+
+  settleAviatorBetsInDb(db, userId, getRoundResult);
+
+  const numAmount = Math.floor(Number(betAmount));
+  if (!Number.isFinite(numAmount) || numAmount < minBet) throw new Error(`Minimum bet is PKR ${minBet}`);
+  if (numAmount > maxBet) throw new Error(`Maximum bet is PKR ${maxBet}`);
+
+  let auto = null;
+  if (autoCashout !== null && autoCashout !== undefined && autoCashout !== '') {
+    auto = round2(autoCashout);
+    if (!(auto >= 1.01 && auto <= 1000)) throw new Error('Auto cash out must be between 1.01x and 1000x');
+  }
+
+  const sameRound = db.bets.filter(b => b.game === 'aviator' && b.userId === userId && b.roundId === roundId && b.status === 'placed');
+  if (sameRound.length >= 2) throw new Error('Maximum 2 bets per round');
+
+  const currentBal = Number(user.balance || 0);
+  if (currentBal < numAmount) throw new Error('Insufficient balance');
+  touchBalance(user, currentBal - numAmount);
 
   const betRecord = {
-    id: `crash_bet_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+    id: `crash_bet_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     userId: user.id,
     username: user.username,
     game: 'aviator',
+    roundId,
     amount: numAmount,
     betAmount: numAmount,
     multiplier: 0,
     payout: 0,
-    status: 'placed', // 'placed' | 'won' | 'lost' | 'cancelled'
-    autoCashout: autoCashout ? Number(autoCashout) : null,
+    status: 'placed', // 'placed' | 'won' | 'lost' | 'cancelled' | 'refunded'
+    autoCashout: auto,
     createdAt: new Date().toISOString()
   };
 
   db.bets.unshift(betRecord);
-  if (db.bets.length > 500) db.bets.pop();
+  if (db.bets.length > 1000) db.bets.length = 1000;
 
-  db.stats.totalWagered = Math.round(((db.stats.totalWagered || 0) + numAmount) * 100) / 100;
-  db.stats.grossGamingRevenue = Math.round((db.stats.totalWagered - (db.stats.totalPayouts || 0)) * 100) / 100;
+  db.stats.totalWagered = round2((db.stats.totalWagered || 0) + numAmount);
+  recalcGgr(db);
 
   await writeDB(db);
-  return { success: true, bet: betRecord, newBalance };
+  return { success: true, bet: betRecord, newBalance: user.balance };
 }
 
-// Cancel Bet during WAITING phase
-async function cancelBetTransaction({ userId, betId }) {
+async function cancelBetTransaction({ userId, betId, roundId }) {
   if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
+  ensureCollections(db);
   const user = db.users.find(u => u.id === userId);
   if (!user) throw new Error('User not found');
 
-  if (!Array.isArray(db.bets)) db.bets = [];
   const betRecord = db.bets.find(b => b.id === betId && b.userId === userId);
-  if (!betRecord) {
-    throw new Error('Bet not found');
-  }
-
-  if (betRecord.status !== 'placed') {
-    throw new Error(`Cannot cancel bet: status is already '${betRecord.status}'`);
-  }
+  if (!betRecord) throw new Error('Bet not found');
+  if (betRecord.status !== 'placed') throw new Error(`Cannot cancel bet: status is already '${betRecord.status}'`);
+  if (betRecord.roundId !== roundId) throw new Error('This bet belongs to a round that has already started');
 
   betRecord.status = 'cancelled';
   betRecord.cancelledAt = new Date().toISOString();
+  touchBalance(user, Number(user.balance || 0) + betRecord.betAmount);
 
-  const refundedBalance = Math.round((Number(user.balance || 0) + betRecord.betAmount) * 100) / 100;
-  user.balance = refundedBalance;
-  user.balanceUpdatedAt = Date.now();
-  user.version = (user.version || 0) + 1;
-
-  if (db.stats && db.stats.totalWagered) {
-    db.stats.totalWagered = Math.max(0, Math.round((db.stats.totalWagered - betRecord.betAmount) * 100) / 100);
-    db.stats.grossGamingRevenue = Math.round(((db.stats.totalWagered || 0) - (db.stats.totalPayouts || 0)) * 100) / 100;
-  }
+  db.stats.totalWagered = round2(Math.max(0, (db.stats.totalWagered || 0) - betRecord.betAmount));
+  recalcGgr(db);
 
   await writeDB(db);
-  return { success: true, cancelledBetId: betId, newBalance: refundedBalance };
+  return { success: true, cancelledBetId: betId, newBalance: user.balance };
 }
 
-// Atomic Aviator Bet Cashout (Strict verification against double-cashout and invalid states)
-async function cashoutBetTransaction({ userId, username, betId, betAmount, multiplier, maxAllowedMultiplier }) {
+// multiplier must already be verified by the route against the global engine.
+async function cashoutBetTransaction({ userId, betId, roundId, multiplier }) {
   if (syncWithCloud) await syncWithCloud(true);
   const db = readDB();
+  ensureCollections(db);
   const user = db.users.find(u => u.id === userId);
   if (!user) throw new Error('User not found');
 
-  const numAmount = Number(betAmount);
-  let numMultiplier = Number(multiplier);
-  if (isNaN(numAmount) || numAmount <= 0) throw new Error('Invalid bet amount');
-  if (isNaN(numMultiplier) || numMultiplier < 1.01) throw new Error('Valid multiplier >= 1.01 required');
+  const numMultiplier = Math.floor(Number(multiplier) * 100 + 1e-6) / 100;
+  if (!(numMultiplier >= 1.0)) throw new Error('Invalid multiplier');
 
-  if (maxAllowedMultiplier && numMultiplier > maxAllowedMultiplier) {
-    numMultiplier = maxAllowedMultiplier;
-  }
+  const betRecord = db.bets.find(b => b.id === betId && b.userId === userId);
+  if (!betRecord) throw new Error('Active bet not found for cashout');
+  if (betRecord.status === 'won') throw new Error('Bet has already been cashed out');
+  if (betRecord.status === 'cancelled') throw new Error('Bet was cancelled');
+  if (betRecord.status === 'refunded') throw new Error('Round was stopped; bet refunded');
+  if (betRecord.status === 'lost') throw new Error('Plane already flew away; bet was lost');
+  if (betRecord.roundId !== roundId) throw new Error('This bet is not in the current flight');
 
-  if (!Array.isArray(db.bets)) db.bets = [];
-  let betRecord = db.bets.find(b => b.id === betId && b.userId === userId);
-  if (!betRecord && userId) {
-    // Check placed bet matching amount for this user
-    betRecord = db.bets.find(b => b.userId === userId && b.status === 'placed' && Math.abs(b.betAmount - numAmount) < 0.01);
-  }
-
-  if (!betRecord) {
-    throw new Error('Active bet not found for cashout');
-  }
-
-  if (betRecord.status === 'won') {
-    throw new Error('Bet has already been cashed out');
-  }
-  if (betRecord.status === 'cancelled') {
-    throw new Error('Bet was cancelled');
-  }
-  if (betRecord.status === 'lost') {
-    throw new Error('Plane already crashed; bet was lost');
-  }
-
-  const payout = Math.round(betRecord.betAmount * numMultiplier * 100) / 100;
-  const currentBal = Number(user.balance || 0);
-  const newBalance = Math.round((currentBal + payout) * 100) / 100;
-  user.balance = newBalance;
-  user.balanceUpdatedAt = Date.now();
-  user.version = (user.version || 0) + 1;
+  const payout = round2(betRecord.betAmount * numMultiplier);
+  touchBalance(user, Number(user.balance || 0) + payout);
 
   betRecord.multiplier = numMultiplier;
   betRecord.payout = payout;
   betRecord.status = 'won';
   betRecord.cashedOutAt = new Date().toISOString();
 
-  if (!db.stats) db.stats = { totalWagered: 0.0, totalPayouts: 0.0, grossGamingRevenue: 0.0 };
-  db.stats.totalPayouts = Math.round(((db.stats.totalPayouts || 0) + payout) * 100) / 100;
-  db.stats.grossGamingRevenue = Math.round(((db.stats.totalWagered || 0) - db.stats.totalPayouts) * 100) / 100;
+  db.stats.totalPayouts = round2((db.stats.totalPayouts || 0) + payout);
+  recalcGgr(db);
 
   await writeDB(db);
-  return { success: true, payout, multiplier: numMultiplier, newBalance, betId: betRecord.id };
+  return { success: true, payout, multiplier: numMultiplier, newBalance: user.balance, betId: betRecord.id };
 }
 
-// Mark remaining active uncashed bets as lost when round crashes
-async function markUncashedBetsLost() {
+function getUserAviatorBets(userId, limit = 30) {
   const db = readDB();
-  if (!Array.isArray(db.bets)) return;
-  let modified = false;
-  db.bets.forEach(b => {
-    if (b.game === 'aviator' && b.status === 'placed') {
-      b.status = 'lost';
-      modified = true;
-    }
-  });
-  if (modified) {
-    await writeDB(db);
-  }
+  return (db.bets || []).filter(b => b.game === 'aviator' && b.userId === userId).slice(0, limit);
 }
+
+// Real bets of a round for the public live feed (names masked).
+function getRoundBetsPublic(roundId) {
+  const db = readDB();
+  return (db.bets || [])
+    .filter(b => b.game === 'aviator' && b.roundId === roundId && b.status !== 'cancelled')
+    .slice(0, 50)
+    .map(b => ({
+      id: b.id,
+      username: maskName(b.username),
+      amount: b.betAmount,
+      status: b.status,
+      multiplier: b.status === 'won' ? b.multiplier : null,
+      payout: b.status === 'won' ? b.payout : null
+    }));
+}
+
+function maskName(name) {
+  const n = String(name || 'player');
+  if (n.length <= 3) return `${n[0]}**`;
+  return `${n.slice(0, 2)}***${n.slice(-1)}`;
+}
+
 
 // Mines Serverless Persistence Helpers (Stops in-memory loss across lambdas)
 async function saveUserMinesGame(userId, session) {
@@ -739,7 +743,10 @@ module.exports = {
   placeBetTransaction,
   cancelBetTransaction,
   cashoutBetTransaction,
-  markUncashedBetsLost,
+  settleUserAviatorBets,
+  hasOpenAviatorBets,
+  getUserAviatorBets,
+  getRoundBetsPublic,
   saveUserMinesGame,
   getUserMinesGame,
   clearUserMinesGame,
