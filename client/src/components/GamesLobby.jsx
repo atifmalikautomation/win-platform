@@ -1,238 +1,77 @@
-import React, { useState } from 'react';
-import {
-  Bomb, Zap, Play, Search,
-  ShieldCheck, Dices, Flame, Trophy, Coins
-} from 'lucide-react';
-import { soundFx } from '../utils/soundEffects';
+import React from 'react';
+import { Play, ShieldCheck, Dices, Coins, Trophy, Triangle, Clock } from 'lucide-react';
+
+// Only Aviator is playable. Other titles are shown as "Coming soon" without any made-up stats.
+const GAMES = [
+  {
+    id: 'crash',
+    title: 'Aviator',
+    tag: 'Crash',
+    playable: true,
+    description: 'Bet before take-off and cash out before the plane flies away. Two bets per round, auto cash-out, provably fair.',
+    art: <img src="/aviator_plane.png" alt="" className="w-28 sm:w-32 h-auto drop-shadow-[0_10px_25px_rgba(229,5,57,0.45)]" />
+  },
+  { id: 'plinko', title: 'Plinko', tag: 'Instant', playable: false, description: 'Drop the ball and watch where it lands.', art: <Triangle className="w-12 h-12 text-violet-400" /> },
+  { id: 'dice', title: 'Dice', tag: 'Instant', playable: false, description: 'Pick your target and roll.', art: <Dices className="w-12 h-12 text-sky-400" /> },
+  { id: 'coinflip', title: 'Coin Flip', tag: 'Instant', playable: false, description: 'Heads or tails — simple and quick.', art: <Coins className="w-12 h-12 text-amber-400" /> },
+  { id: 'roulette', title: 'Roulette', tag: 'Table', playable: false, description: 'Classic European wheel.', art: <Trophy className="w-12 h-12 text-emerald-400" /> }
+];
 
 export default function GamesLobby({ onSelectGame }) {
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const games = [
-    {
-      id: 'crash',
-      title: 'Aviator X',
-      category: 'crash',
-      provider: 'SkyWin Originals',
-      rtp: '97.0%',
-      badge: 'LIVE NOW',
-      badgeColor: 'bg-[#ff1a40] text-white',
-      multiplier: 'Up to 1,000x',
-      gradient: 'from-[#ff1a40]/30 via-[#2a0d16] to-[#12151d]',
-      borderColor: 'border-[#ff1a40]/40 group-hover:border-[#ff1a40]',
-      icon: <img src="/aviator_plane.png" alt="Aviator" className="w-10 h-7 object-contain filter drop-shadow" />,
-      playable: true,
-      description: 'Watch the red monoplane climb and cash out before it flies away!'
-    },
-    {
-      id: 'mines',
-      title: 'Mines 5x5',
-      category: 'fast',
-      provider: 'In-House Provably Fair',
-      rtp: '98.0%',
-      badge: 'SOON',
-      badgeColor: 'bg-[#00c638] text-slate-950',
-      multiplier: 'Up to 500x',
-      gradient: 'from-[#00c638]/20 via-[#0e2417] to-[#12151d]',
-      borderColor: 'border-[#00c638]/40 group-hover:border-[#00c638]',
-      icon: <Bomb className="w-8 h-8 text-[#00c638]" />,
-      playable: false,
-      description: 'Uncover sparkling green diamonds while dodging hidden mine traps.'
-    },
-    {
-      id: 'speed_cash',
-      title: 'Speed & Cash',
-      category: 'crash',
-      provider: 'SkyWin Originals',
-      rtp: '96.8%',
-      badge: 'SOON',
-      badgeColor: 'bg-[#1a68ff] text-white',
-      multiplier: 'Dual Drag Race',
-      gradient: 'from-[#1a68ff]/20 via-[#101b33] to-[#12151d]',
-      borderColor: 'border-[#1a68ff]/40 group-hover:border-[#1a68ff]',
-      icon: <Zap className="w-8 h-8 text-[#38bdf8]" />,
-      playable: false,
-      description: 'Bet on two sports cars racing through traffic with multiplier boosts.'
-    },
-    {
-      id: 'coinflip',
-      title: 'Coinflip Pro',
-      category: 'fast',
-      provider: 'Provably Fair',
-      rtp: '98.5%',
-      badge: 'SOON',
-      badgeColor: 'bg-[#ffb800] text-slate-950',
-      multiplier: '1.98x Instant',
-      gradient: 'from-[#ffb800]/20 via-[#272110] to-[#12151d]',
-      borderColor: 'border-[#ffb800]/40 group-hover:border-[#ffb800]',
-      icon: <Coins className="w-8 h-8 text-[#ffb800]" />,
-      playable: false,
-      description: 'Simple, high-speed 50/50 provably fair cryptographic coin toss.'
-    },
-    {
-      id: 'plinko',
-      title: 'Plinko X',
-      category: 'fast',
-      provider: 'Smartsoft',
-      rtp: '97.2%',
-      badge: 'SOON',
-      badgeColor: 'bg-purple-500 text-white',
-      multiplier: 'Up to 1,000x',
-      gradient: 'from-purple-600/20 via-[#22102e] to-[#12151d]',
-      borderColor: 'border-purple-500/40 group-hover:border-purple-500',
-      icon: <Dices className="w-8 h-8 text-purple-400" />,
-      playable: false,
-      description: 'Drop pins down the pyramid for explosive corner slot payouts.'
-    },
-    {
-      id: 'roulette',
-      title: 'Royal Roulette',
-      category: 'live',
-      provider: 'SkyWin Live Studios',
-      rtp: '97.3%',
-      badge: 'SOON',
-      badgeColor: 'bg-emerald-500 text-slate-950',
-      multiplier: '36x European',
-      gradient: 'from-emerald-500/20 via-[#0e271e] to-[#12151d]',
-      borderColor: 'border-emerald-500/40 group-hover:border-emerald-500',
-      icon: <Trophy className="w-8 h-8 text-emerald-400" />,
-      playable: false,
-      description: 'High-roller European roulette wheel with live croupier feeds.'
-    }
-  ];
-
-  const filteredGames = games.filter(g => {
-    const matchesCategory = activeFilter === 'all' || g.category === activeFilter;
-    const matchesSearch = g.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          g.provider.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-
-  const categories = [
-    { id: 'all', label: 'All Games', icon: <Flame className="w-3.5 h-3.5" /> },
-    { id: 'crash', label: 'Crash Games', icon: <img src="/aviator_plane.png" alt="Crash" className="w-4 h-2.5 object-contain" /> },
-    { id: 'fast', label: 'Quick Games', icon: <Zap className="w-3.5 h-3.5" /> },
-    { id: 'live', label: 'Live & Table', icon: <Trophy className="w-3.5 h-3.5" /> }
-  ];
-
+  const [featured, ...rest] = GAMES;
   return (
-    <div className="space-y-5">
-      
-      {/* Header & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#111520] p-3 sm:p-4 rounded-2xl border border-[#1b2234]">
-        {/* Category Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          {categories.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => {
-                soundFx.playBet();
-                setActiveFilter(cat.id);
-              }}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-heading font-bold whitespace-nowrap transition-all ${
-                activeFilter === cat.id
-                  ? 'bg-[#1a68ff] text-white shadow-sm'
-                  : 'bg-[#161b29] text-slate-400 hover:text-white hover:bg-[#1f273b]'
-              }`}
-            >
-              {cat.icon}
-              <span>{cat.label}</span>
-            </button>
-          ))}
+    <div className="space-y-3 sm:space-y-4">
+      {/* Featured: Aviator */}
+      <button
+        type="button"
+        onClick={() => onSelectGame(featured.id)}
+        className="group relative w-full text-left overflow-hidden rounded-2xl border border-[#e50539]/30 hover:border-[#e50539]/70 bg-[#1b1c1d] transition-colors"
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,rgba(229,5,57,0.28),transparent_60%)]" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center gap-4 p-5 sm:p-6">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#e50539] text-white">LIVE</span>
+              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">{featured.tag}</span>
+            </div>
+            <h3 className="font-heading font-black text-2xl sm:text-3xl text-white tracking-tight">{featured.title}</h3>
+            <p className="text-sm text-zinc-400 mt-1.5 max-w-lg">{featured.description}</p>
+            <div className="mt-4 flex items-center gap-3">
+              <span className="btn-bet-green inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm">
+                <Play className="w-4 h-4 fill-current" /> Play now
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-zinc-400">
+                <ShieldCheck className="w-4 h-4 text-[#5fd23b]" /> Provably fair
+              </span>
+            </div>
+          </div>
+          <div className="shrink-0 self-center sm:pr-4 group-hover:-translate-y-1 group-hover:translate-x-1 transition-transform duration-300">
+            {featured.art}
+          </div>
         </div>
+      </button>
 
-        {/* Search input */}
-        <div className="relative min-w-[220px]">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search SkyWin games..."
-            className="w-full pl-8 pr-3 py-1.5 bg-[#0a0d16] border border-[#1e2638] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#1a68ff]"
-          />
-        </div>
-      </div>
-
-      {/* Games Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredGames.map((game) => (
+      {/* Coming soon */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+        {rest.map(g => (
           <div
-            key={game.id}
-            onClick={() => {
-              if (game.playable) {
-                soundFx.playBet();
-                onSelectGame(game.id);
-              }
-            }}
-            className={`group relative rounded-2xl bg-gradient-to-br ${game.gradient} border ${game.borderColor} p-5 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-lg select-none ${
-              game.playable ? 'cursor-pointer hover:-translate-y-1 hover:shadow-2xl' : 'opacity-85'
-            }`}
+            key={g.id}
+            className="relative rounded-2xl bg-[#1b1c1d] border border-white/[0.06] p-4 flex flex-col"
+            aria-disabled="true"
           >
-            {/* Top Row: Provider + Badge */}
-            <div className="flex items-center justify-between z-10">
-              <span className="text-[11px] font-bold text-slate-400 font-heading uppercase tracking-wider">
-                {game.provider}
-              </span>
-              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md font-heading ${game.badgeColor}`}>
-                {game.badge}
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{g.tag}</span>
+              <span className="flex items-center gap-1 text-[10px] font-bold text-zinc-300 bg-white/[0.06] px-1.5 py-0.5 rounded">
+                <Clock className="w-3 h-3" /> Soon
               </span>
             </div>
-
-            {/* Middle Row: Icon, Title, Multiplier */}
-            <div className="my-5 flex items-center gap-4 z-10">
-              <div className="p-3.5 rounded-2xl bg-[#0b0e17]/80 border border-white/10 shadow-inner group-hover:scale-105 transition-transform">
-                {game.icon}
-              </div>
-              <div className="flex-1">
-                <h3 className="font-heading font-black text-xl text-white tracking-tight leading-tight">
-                  {game.title}
-                </h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs font-mono font-bold text-[#ffb800]">
-                    {game.multiplier}
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-bold bg-white/[0.06] px-1.5 py-0.5 rounded">
-                    {game.rtp} RTP
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Description */}
-            <p className="text-xs text-slate-300 line-clamp-2 mb-4 leading-relaxed z-10">
-              {game.description}
-            </p>
-
-            {/* Bottom Action */}
-            <div className="pt-3 border-t border-white/[0.08] flex items-center justify-between z-10">
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-heading">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#00c638]" />
-                <span>Provably Fair</span>
-              </div>
-
-              {game.playable ? (
-                <button
-                  type="button"
-                  className="btn-bet-green flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-slate-950 font-heading font-black text-xs shadow-md group-hover:shadow-[#00c638]/40"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>PLAY NOW</span>
-                </button>
-              ) : (
-                <span className="text-[11px] text-slate-400 font-heading font-bold bg-white/[0.05] px-2.5 py-1 rounded-lg">
-                  Coming Soon
-                </span>
-              )}
-            </div>
-
-            {/* Subtle background glow circle on hover */}
-            <div className="absolute -right-8 -bottom-8 w-36 h-36 rounded-full bg-white/[0.02] group-hover:bg-white/[0.05] blur-2xl transition-all pointer-events-none" />
+            <div className="my-4 flex justify-center opacity-70">{g.art}</div>
+            <h3 className="font-heading font-extrabold text-white text-base">{g.title}</h3>
+            <p className="text-[11px] text-zinc-500 mt-0.5 line-clamp-2">{g.description}</p>
+            <span className="mt-3 text-[11px] font-semibold text-zinc-500">Coming soon</span>
           </div>
         ))}
       </div>
-
     </div>
   );
 }

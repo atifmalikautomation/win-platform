@@ -9,36 +9,100 @@ function noStore(res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 }
 
-function limits() {
-  const s = db.getGameSettings();
-  return { minBet: Number(s.minBet) || 10, maxBet: Number(s.maxBet) || 50000 };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const WAIT_MAX_MS = 8000;
+
+// Opportunistic global settlement (auto cash-outs, refunds, losses) so balances
+// are correct even for players who closed the tab. Throttled per instance; the
+// SQL itself is idempotent, so concurrent instances are safe.
+let lastSettle = 0;
+let settling = null;
+function settleInBackground(currentRoundId) {
+  if (settling || Date.now() - lastSettle < 2500) return settling;
+  lastSettle = Date.now();
+  settling = db.settleFinishedRounds(id => engine.getRoundResult(id), currentRoundId)
+    .catch(err => console.error('settle failed:', err.message))
+    .finally(() => { settling = null; });
+  return settling;
 }
 
-// 1. Public live round (same for every player on every server instance)
+async function livePayload({ betsPromise = null, deferSettle = false } = {}) {
+  // deferSettle = waitCrash path: control was just loaded, answer without extra round-trips.
+  const live = deferSettle ? engine.publicState(Date.now()) : await engine.getLiveState();
+  try {
+    live.bets = live.roundId ? await (betsPromise || db.getRoundBetsPublic(live.roundId)) : [];
+  } catch (e) {
+    live.bets = [];
+  }
+  if (live.state === 'CRASHED' || live.state === 'WAITING') {
+    const p = settleInBackground(live.roundId);
+    if (deferSettle) runAfterResponse(p);
+    else await p;
+  }
+  return live;
+}
+
+// Keep the serverless function alive for background work after responding.
+let waitUntil = null;
+try { ({ waitUntil } = require('@vercel/functions')); } catch (e) {}
+function runAfterResponse(promise) {
+  if (!promise) return;
+  if (waitUntil) {
+    try { waitUntil(promise); return; } catch (e) {}
+  }
+  promise.catch(() => {});
+}
+
+// 1. Public live round (identical for every player on every server instance).
+//    ?waitCrash=<roundId> holds the request while that round is flying and
+//    answers the moment it crashes (or after ~8s / emergency stop), so clients
+//    show the crash with network latency only, without knowing it in advance.
 router.get('/live', async (req, res) => {
   noStore(res);
   try {
-    const live = await engine.getLiveState();
-    // Real bets of this round (no fake bots). Uses the cached DB (refreshed ≤ ~1s).
-    try {
-      if (db.syncWithCloud) await db.syncWithCloud(false);
-      live.bets = live.roundId ? db.getRoundBetsPublic(live.roundId) : [];
-    } catch (e) {
-      live.bets = [];
+    const waitRound = Number(req.query.waitCrash);
+    if (Number.isFinite(waitRound) && waitRound > 0) {
+      await engine.loadControl(false);
+      const deadline = Date.now() + WAIT_MAX_MS;
+      let betsPromise = null;
+      for (;;) {
+        const s = engine.stateAt(Date.now());
+        if (s.paused || !s.plan || s.plan.roundId !== waitRound || s.state !== 'FLYING') break;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const untilCrash = s.plan.crashTime - Date.now();
+        if (untilCrash <= 400 && !betsPromise) {
+          // Prefetch the feed so the response leaves right at the crash.
+          betsPromise = new Promise(r => setTimeout(r, Math.max(0, untilCrash - 150)))
+            .then(() => db.getRoundBetsPublic(waitRound));
+          betsPromise.catch(() => {});
+        }
+        await sleep(Math.max(1, Math.min(untilCrash, remaining, 1000)));
+        if (Date.now() < s.plan.crashTime - 5) await engine.loadControl(false); // emergency stop within ~1.5s
+      }
+      const s = engine.stateAt(Date.now());
+      const usePrefetch = betsPromise && s.plan && s.plan.roundId === waitRound;
+      return res.json(await livePayload({ betsPromise: usePrefetch ? betsPromise : null, deferSettle: true }));
     }
-    res.json(live);
+    res.json(await livePayload());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2. My bets + settlement of finished rounds (also returns fresh balance)
+// 2. My bets + settlement of my finished rounds (also returns fresh balance)
 router.get('/my-bets', authenticateToken, async (req, res) => {
   noStore(res);
   try {
     await engine.loadControl(false);
-    const balance = await db.settleUserAviatorBets(req.user.id, id => engine.getRoundResult(id));
-    res.json({ balance, bets: db.getUserAviatorBets(req.user.id, 30) });
+    const s = engine.stateAt(Date.now());
+    const currentRoundId = s.plan ? s.plan.roundId : s.roundId;
+    await db.settleFinishedRounds(id => engine.getRoundResult(id), currentRoundId, { userId: req.user.id });
+    const [balance, bets] = await Promise.all([
+      db.getUserBalance(req.user.id),
+      db.getUserAviatorBets(req.user.id, 30)
+    ]);
+    res.json({ balance, bets });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -48,7 +112,7 @@ router.get('/my-bets', authenticateToken, async (req, res) => {
 router.post('/bet', authenticateToken, async (req, res) => {
   noStore(res);
   try {
-    const settings = db.getGameSettings();
+    const settings = await db.getGameSettings();
     if (settings.maintenance) return res.status(503).json({ error: 'Game is under maintenance' });
 
     await engine.loadControl(true);
@@ -60,17 +124,14 @@ router.post('/bet', authenticateToken, async (req, res) => {
     }
 
     const { amount, autoCashout } = req.body || {};
-    const { minBet, maxBet } = limits();
     const result = await db.placeBetTransaction({
       userId: req.user.id,
       betAmount: amount,
       autoCashout,
       roundId: s.plan.roundId,
-      getRoundResult: id => engine.getRoundResult(id),
-      minBet,
-      maxBet
+      minBet: Number(settings.minBet) || 10,
+      maxBet: Number(settings.maxBet) || 50000
     });
-
     res.json({ success: true, bet: result.bet, newBalance: result.newBalance });
   } catch (err) {
     res.status(400).json({ error: err.message });

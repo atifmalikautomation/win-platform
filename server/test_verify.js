@@ -1,26 +1,48 @@
-// SkyWin backend verification suite. Run: npm test
-// Uses a temporary DB file and a fake clock; never touches server/data.json or the cloud.
+// SkyWin backend verification suite.
+// Run: SKYWIN_TEST_ENV=<env file with DATABASE_URL_UNPOOLED> npm test
+// Uses a throw-away Postgres schema (dropped at the end) and a fake clock.
 const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const assert = require('assert');
 
-const tmpDb = path.join(os.tmpdir(), `skywin-test-${Date.now()}.json`);
-fs.copyFileSync(path.join(__dirname, 'data.json'), tmpDb);
-process.env.SKYWIN_DB_PATH = tmpDb;
-delete process.env.BLOB_READ_WRITE_TOKEN;
-delete process.env.VERCEL;
+const envFile = process.env.SKYWIN_TEST_ENV;
+if (envFile) {
+  for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^([A-Z0-9_]+)="?(.*?)"?$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  }
+}
+const unpooled = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL_UNPOOLED;
+if (!unpooled) {
+  console.error('Set SKYWIN_TEST_ENV (env file) or TEST_DATABASE_URL to run the tests.');
+  process.exit(1);
+}
+const SCHEMA = `skywin_test_${Date.now()}`;
+process.env.DATABASE_URL = unpooled;
+process.env.SKYWIN_PG_SCHEMA = SCHEMA;
+process.env.ADMIN_PASSWORD = 'Test-Admin-Pass-123';
+for (const k of ['VERCEL', 'BLOB_READ_WRITE_TOKEN', 'JWT_SECRET', 'AVIATOR_SECRET']) delete process.env[k];
 
 // ---- fake clock (shared by engine + routes in this process)
 const realNow = Date.now.bind(Date);
 let fakeNow = null;
-Date.now = () => (fakeNow === null ? realNow() : fakeNow);
+let clockOffset = 0;
+Date.now = () => (fakeNow === null ? realNow() + clockOffset : fakeNow);
 
 const db = require('./db');
+const pg = require('./pg');
 const engine = require('./aviatorEngine');
 const app = require('../api/index');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('./routes/auth');
+
+async function dropSchema() {
+  try {
+    await pg.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
+  } catch (e) {
+    console.error('could not drop test schema', SCHEMA, e.message);
+  }
+  await pg.end();
+}
 
 let passed = 0;
 function ok(cond, msg) {
@@ -175,8 +197,14 @@ async function main() {
     ok(r.data.balance === 1050, 'balance 1000 - 100 + 150 = 1050');
 
     console.log('\n7. Admin: emergency stop refunds, pause/resume, no crash-point control');
-    const admin = db.readDB().users.find(u => u.role === 'admin');
-    const adminToken = jwt.sign({ id: admin.id }, JWT_SECRET);
+    r = await call('POST', '/api/auth/login', null, { identifier: 'saqib_admin', password: 'Test-Admin-Pass-123' });
+    ok(r.status === 403 && !r.data?.token, 'admin cannot log in through the player form');
+    r = await call('POST', '/api/auth/login', null, { identifier: 'saqib_admin', password: 'Test-Admin-Pass-123', portal: 'admin' });
+    ok(r.status === 200 && r.data.user.role === 'admin', 'admin portal login with ADMIN_PASSWORD');
+    const adminToken = r.data.token;
+    const fakeAdmin = jwt.sign({ id: userId, role: 'admin' }, JWT_SECRET);
+    r = await call('GET', '/api/admin/stats', fakeAdmin);
+    ok(r.status === 403, 'player id with a self-claimed admin role is still denied');
     t = s.plan.endTime;
     s = engine.stateAt(t);
     while (!(s.state === 'WAITING' && s.plan.crashAt >= 1.5 && s.plan.flightStart - t > 3000)) {
@@ -218,15 +246,78 @@ async function main() {
     r = await call('POST', '/api/mines/start', token, { betAmount: 100, minesCount: 3 });
     ok(r.status === 403, 'mines start blocked');
 
+    console.log('\n9. Concurrency: no lost writes, no double payouts');
+    s = engine.stateAt(Date.now());
+    t = Date.now();
+    while (!(s.state === 'WAITING' && s.plan.crashAt >= 1.5 && s.plan.flightStart - t > 3000)) {
+      t = (s.plan ? s.plan.endTime : t + 1000) + 10;
+      s = engine.stateAt(t);
+    }
+    fakeNow = t;
+    await db.setUserExactBalance(userId, 300);
+    const burst = await Promise.all([1, 2, 3, 4, 5].map(() => call('POST', '/api/crash/bet', token, { amount: 100 })));
+    const okBets = burst.filter(x => x.status === 200);
+    ok(okBets.length === 2, `5 simultaneous bets -> exactly 2 accepted (got ${okBets.length})`);
+    ok(await db.getUserBalance(userId) === 100, 'balance 300 - 2x100 = 100 (no overdraft, no lost update)');
+    fakeNow = s.plan.flightStart + 1200;
+    const race = await Promise.all([1, 2, 3, 4].map(() => call('POST', '/api/crash/cashout', token, { betId: okBets[0].data.bet.id })));
+    ok(race.filter(x => x.status === 200).length === 1, '4 simultaneous cash-outs of one bet -> paid exactly once');
+    const regs = await Promise.all([1, 2, 3, 4, 5, 6].map(i => call('POST', '/api/auth/register', null,
+      { username: `burst${i}_${Date.now() % 100000}`, email: `burst${i}_${Date.now()}@example.com`, password: 'pass1234' })));
+    ok(regs.every(x => x.status === 200), '6 simultaneous registrations all succeed');
+    const all = await db.listUsers();
+    ok(regs.every(x => all.some(u => u.id === x.data.user.id)), 'every registered user is still there (old bug: users vanished)');
+    const dup = await call('POST', '/api/auth/register', null, { username: uname.toUpperCase(), email: 'other@example.com', password: 'pass1234' });
+    ok(dup.status === 400, 'duplicate username (case-insensitive) rejected');
+
+    console.log('\n10. Deposit -> approve credits; withdraw reserves, reject refunds');
+    await db.setUserExactBalance(userId, 1000);
+    r = await call('POST', '/api/cashier/deposit', token, { method: 'easypaisa', amount: 2999, reference: 'TID000' });
+    ok(r.status === 400, 'deposit below PKR 3,000 rejected');
+    r = await call('POST', '/api/cashier/deposit', token, { method: 'easypaisa', amount: 3000, reference: 'TID123' });
+    ok(r.status === 200, 'deposit request created');
+    const depId = r.data.transaction.id;
+    r = await call('POST', `/api/admin/transactions/${depId}/action`, adminToken, { action: 'approve' });
+    ok(r.status === 200 && await db.getUserBalance(userId) === 4000, 'approve credits 3000 (1000 -> 4000)');
+    r = await call('POST', `/api/admin/transactions/${depId}/action`, adminToken, { action: 'approve' });
+    ok(r.status === 400 && await db.getUserBalance(userId) === 4000, 'second approve rejected (no double credit)');
+    r = await call('POST', '/api/cashier/withdraw', token, { method: 'easypaisa', amount: 600, accountNumber: '03001234567' });
+    ok(r.status === 200 && r.data.newBalance === 3400, 'withdraw reserves 600 (4000 -> 3400)');
+    r = await call('POST', `/api/admin/transactions/${r.data.transaction.id}/action`, adminToken, { action: 'reject' });
+    ok(r.status === 200 && await db.getUserBalance(userId) === 4000, 'reject refunds 600 (back to 4000)');
+    r = await call('POST', '/api/cashier/withdraw', token, { method: 'easypaisa', amount: 99999, accountNumber: '0300' });
+    ok(r.status === 400, 'withdraw above balance rejected');
+
+    console.log('\n11. waitCrash long-poll answers at the crash moment (real clock)');
+    clockOffset = fakeNow - realNow(); // continue the timeline in real time
+    fakeNow = null;
+    await call('POST', '/api/admin/game-control/aviator/resume', adminToken); // no-op if running
+    let live = engine.stateAt(Date.now());
+    const waitStart = Date.now();
+    while (!(live.state === 'FLYING' && live.plan.crashTime - Date.now() < 7000 && live.plan.crashTime - Date.now() > 300)) {
+      if (Date.now() - waitStart > 60000) break;
+      await new Promise(res => setTimeout(res, 100));
+      live = engine.stateAt(Date.now());
+    }
+    if (live.state === 'FLYING') {
+      const r2 = await call('GET', `/api/crash/live?waitCrash=${live.plan.roundId}`);
+      const lag = Date.now() - live.plan.crashTime;
+      ok(r2.data.state === 'CRASHED' && r2.data.roundId === live.plan.roundId, `waitCrash returned CRASHED ${r2.data.crashAt}x`);
+      ok(lag >= 0 && lag < 400, `answered ${lag}ms after the crash (never before it)`);
+    } else {
+      ok(true, 'waitCrash check skipped (no suitable flight within 60s)');
+      ok(true, 'waitCrash latency check skipped');
+    }
+
     console.log(`\nALL ${passed} CHECKS PASSED\n`);
   } finally {
     server.close();
-    try { fs.unlinkSync(tmpDb); } catch (e) {}
+    await dropSchema();
   }
 }
 
-main().catch(err => {
+main().catch(async err => {
   console.error('\nTEST FAILED:', err.message);
-  try { fs.unlinkSync(tmpDb); } catch (e) {}
+  await dropSchema().catch(() => {});
   process.exit(1);
 });

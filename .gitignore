@@ -25,3 +25,7 @@ Thumbs.db
 
 .vercel
 .env*
+
+server/data.json
+.agents/
+skills-lock.json

@@ -11,7 +11,7 @@ function resolveJwtSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
   if (process.env.VERCEL) {
     // Last-resort: derive from another server-only secret so it is never public.
-    const base = process.env.BLOB_READ_WRITE_TOKEN || process.env.AVIATOR_SECRET;
+    const base = process.env.AVIATOR_SECRET || process.env.DATABASE_URL;
     if (base) return crypto.createHash('sha256').update(`jwt:${base}`).digest('hex');
     throw new Error('JWT_SECRET is not configured');
   }
@@ -19,341 +19,231 @@ function resolveJwtSecret() {
 }
 const JWT_SECRET = resolveJwtSecret();
 
-// Middleware to authenticate JWT (only real signed tokens are accepted)
-async function authenticateToken(req, res, next) {
+function publicUser(u, overrides = {}) {
+  return {
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    role: u.role,
+    balance: Number(u.balance || 0),
+    bonusBalance: Number(u.bonusBalance || 0),
+    balanceUpdatedAt: u.balanceUpdatedAt || 0,
+    version: u.version || 0,
+    authProvider: u.authProvider || 'email',
+    lastLogin: u.lastLogin || u.createdAt || null,
+    picture: u.picture || '',
+    ...overrides
+  };
+}
+
+function signToken(user, role) {
+  return jwt.sign({ id: user.id, role }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+// Simple per-instance login throttle (best effort on serverless).
+const attempts = new Map();
+function tooManyAttempts(key) {
+  const now = Date.now();
+  const a = attempts.get(key) || { n: 0, at: now };
+  if (now - a.at > 10 * 60 * 1000) { a.n = 0; a.at = now; }
+  a.n += 1;
+  attempts.set(key, a);
+  if (attempts.size > 5000) attempts.clear();
+  return a.n > 10;
+}
+
+// Middleware: only real signed tokens are accepted. The role comes from the
+// token (admin tokens are only issued through the admin portal login).
+function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Access token required' });
 
   jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) return res.status(401).json({ error: 'Session expired, please log in again' });
-    let user = db.findUserById(decoded.id);
-    if (!user && db.syncWithCloud) {
-      await db.syncWithCloud(true);
-      user = db.findUserById(decoded.id);
+    try {
+      const user = await db.findUserById(decoded.id);
+      if (!user) return res.status(401).json({ error: 'Account not found, please log in again' });
+      if (user.isBanned) return res.status(403).json({ error: 'This account has been suspended' });
+      const isAdmin = decoded.role === 'admin' && (user.role === 'admin' || db.isSuperAdmin(user));
+      req.user = { ...user, role: isAdmin ? 'admin' : 'user' };
+      next();
+    } catch (e) {
+      console.error('auth lookup failed:', e.message);
+      res.status(503).json({ error: 'Service temporarily unavailable, please retry' });
     }
-    if (!user || user.isBanned) return res.status(403).json({ error: 'User banned or not found' });
-    req.user = user;
-    next();
   });
 }
 
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const rawUsername = req.body.username || '';
-    const rawEmail = req.body.email || '';
-    const rawPassword = req.body.password || '';
-
-    const username = rawUsername.trim();
-    const email = rawEmail.trim().toLowerCase();
-    const password = rawPassword.trim();
+    const username = String(req.body.username || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '').trim();
 
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'Username, email, and password are required' });
     }
-
-    if (username.length < 3) {
-      return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    if (!/^[A-Za-z0-9_.]{3,20}$/.test(username)) {
+      return res.status(400).json({ error: 'Username must be 3-20 characters (letters, numbers, _ or .)' });
     }
-
-    if (password.length < 4) {
-      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
     }
-
-    if (db.syncWithCloud) await db.syncWithCloud();
-
-    if (db.findUserByUsername(username)) {
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    if (db.isSuperAdmin({ username, email })) {
       return res.status(400).json({ error: 'Username already taken' });
-    }
-
-    if (db.findUserByEmail(email)) {
-      return res.status(400).json({ error: 'Email already registered' });
     }
 
     const newUser = await db.createUser({
       username,
       email,
       password,
-      initialBalance: 0.0,
-      authProvider: email.includes('@gmail.com') ? 'google' : 'email',
+      initialBalance: 0,
+      authProvider: 'email',
       lastLogin: new Date().toISOString()
     });
-    const token = jwt.sign({ id: newUser.id, role: newUser.role }, JWT_SECRET, { expiresIn: '7d' });
-
-    res.json({
-      token,
-      user: {
-        id: newUser.id,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role,
-        balance: newUser.balance,
-        bonusBalance: newUser.bonusBalance,
-        authProvider: newUser.authProvider,
-        lastLogin: newUser.lastLogin,
-        picture: newUser.picture || ''
-      }
-    });
+    res.json({ token: signToken(newUser, 'user'), user: publicUser(newUser, { role: 'user' }) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const known = /already (taken|registered)/.test(err.message);
+    res.status(known ? 400 : 500).json({ error: known ? err.message : 'Registration failed, please try again' });
   }
 });
 
 // Login
 router.post('/login', async (req, res) => {
   try {
-    const rawId = req.body.identifier || req.body.username || req.body.email || '';
-    const rawPassword = req.body.password || '';
-
-    const cleanId = rawId.trim().toLowerCase();
-    const password = rawPassword.trim();
+    const cleanId = String(req.body.identifier || req.body.username || req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '').trim();
+    const portal = String(req.body.portal || '').trim().toLowerCase();
 
     if (!cleanId || !password) {
       return res.status(400).json({ error: 'Please provide username/email and password' });
     }
-
-    // Always sync with cloud storage before checking credentials to ensure freshest user data & balance
-    if (db.syncWithCloud) await db.syncWithCloud(true);
-    let user = db.findUserByIdentifier(cleanId);
-
-    if (!user) {
-      return res.status(400).json({ error: 'User not found' });
+    if (tooManyAttempts(`${cleanId}|${req.headers['x-forwarded-for'] || req.ip}`)) {
+      return res.status(429).json({ error: 'Too many attempts. Please wait 10 minutes and try again.' });
     }
 
-    if (user.isBanned) {
-      return res.status(403).json({ error: 'This account has been suspended by administration' });
-    }
+    const user = await db.findUserByIdentifier(cleanId);
+    // Same message for unknown user and wrong password (no account enumeration).
+    const invalid = () => res.status(400).json({ error: 'Incorrect username/email or password' });
+    if (!user) return invalid();
 
-    const cleanUser = (user.username || '').trim().toLowerCase();
-    const cleanEmail = (user.email || '').trim().toLowerCase();
-    const isSuperAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com');
+    const superAdmin = db.isSuperAdmin(user);
     const envAdminPassword = process.env.ADMIN_PASSWORD || '';
-
-    // No hardcoded passwords: super admin uses the ADMIN_PASSWORD env var, everyone else bcrypt.
     let match = false;
-    if (isSuperAdminAccount && envAdminPassword) {
+    if (superAdmin && envAdminPassword) {
       const a = Buffer.from(password);
       const b = Buffer.from(envAdminPassword);
       match = a.length === b.length && crypto.timingSafeEqual(a, b);
     } else if (user.passwordHash) {
       match = bcrypt.compareSync(password, user.passwordHash);
     }
+    if (!match) return invalid();
 
-    if (!match) {
-      return res.status(400).json({ error: 'Incorrect password' });
+    if (user.isBanned) {
+      return res.status(403).json({ error: 'This account has been suspended by administration' });
     }
 
-    const portal = (req.body.portal || '').trim().toLowerCase();
-    const isAdminAccount = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || user.role === 'admin');
-
-    // Admin account CANNOT log in from player form unless portal === 'admin'
+    const isAdminAccount = superAdmin || user.role === 'admin';
     if (isAdminAccount && portal !== 'admin') {
       return res.status(403).json({
         error: '⚠️ Admin account player login se allow nahi hai. Pehly neechay "Super Admin Portal Login" par click karein.'
       });
     }
-
-    const effectiveRole = (isAdminAccount && portal === 'admin') ? 'admin' : (user.role === 'admin' && portal === 'admin' ? 'admin' : 'user');
-    user.role = effectiveRole;
-
-    const nowIso = new Date().toISOString();
-    user.lastLogin = nowIso;
-    if (!user.authProvider) {
-      user.authProvider = (cleanEmail && cleanEmail.includes('@gmail.com')) ? 'google' : 'email';
+    if (!isAdminAccount && portal === 'admin') {
+      return res.status(403).json({ error: 'This account does not have admin access' });
     }
-
-    // Persist login timestamp to DB
-    const currentDb = db.readDB();
-    const uIdx = currentDb.users.findIndex(u => u.id === user.id);
-    if (uIdx !== -1) {
-      currentDb.users[uIdx].lastLogin = nowIso;
-      currentDb.users[uIdx].authProvider = user.authProvider;
-      currentDb.users[uIdx].role = effectiveRole;
-      await db.writeDB(currentDb);
-      user = currentDb.users[uIdx];
-    }
-
-    const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        balance: user.balance,
-        bonusBalance: user.bonusBalance,
-        authProvider: user.authProvider,
-        lastLogin: user.lastLogin,
-        picture: user.picture || ''
-      }
-    });
+    const role = isAdminAccount ? 'admin' : 'user';
+    const fresh = (await db.recordLogin(user.id)) || user;
+    res.json({ token: signToken(fresh, role), user: publicUser(fresh, { role }) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('login failed:', err.message);
+    res.status(500).json({ error: 'Login failed, please try again' });
   }
 });
 
-// Google OAuth & 1-Click Sign-In
+// Google sign-in (only a Google-signed ID token for THIS site is accepted)
 router.post('/google', async (req, res) => {
   try {
     const { credential } = req.body || {};
-    let email = '';
-    let name = '';
-    let picture = '';
-
-    // SECURITY: only a Google-signed ID token is accepted. The old "type your Gmail"
-    // path let anyone log into ANY account (including admin) with just an email.
     if (!credential || typeof credential !== 'string') {
       return res.status(400).json({ error: 'Google sign-in is not available. Please log in with username and password.' });
     }
     const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
-    if (!googleRes.ok) {
-      return res.status(401).json({ error: 'Google sign-in could not be verified' });
-    }
-    const googleData = await googleRes.json();
+    if (!googleRes.ok) return res.status(401).json({ error: 'Google sign-in could not be verified' });
+    const g = await googleRes.json();
     const expectedAud = process.env.GOOGLE_CLIENT_ID;
-    if (!expectedAud || googleData.aud !== expectedAud) {
+    if (!expectedAud || g.aud !== expectedAud) {
       return res.status(401).json({ error: 'Google sign-in is not configured for this site' });
     }
-    if (!googleData.email || String(googleData.email_verified) !== 'true') {
+    if (!g.email || String(g.email_verified) !== 'true') {
       return res.status(401).json({ error: 'Google account email is not verified' });
     }
-    email = googleData.email.trim().toLowerCase();
-    name = googleData.name || googleData.given_name || email.split('@')[0];
-    picture = googleData.picture || '';
+    const email = g.email.trim().toLowerCase();
+    const name = g.name || g.given_name || email.split('@')[0];
+    const picture = g.picture || '';
 
-    // 2. Validate email
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'Valid Google email address is required' });
-    }
-
-    // 3. Ensure freshest data from cloud database
-    if (db.syncWithCloud) await db.syncWithCloud(true);
-
-    // 4. Check if user already exists
-    let user = db.findUserByEmail(email) || db.findUserByIdentifier(email);
-
+    let user = await db.findUserByEmail(email);
     if (user) {
-      if (user.isBanned) {
-        return res.status(403).json({ error: 'This account has been suspended by administration' });
+      if (user.isBanned) return res.status(403).json({ error: 'This account has been suspended by administration' });
+      if (db.isSuperAdmin(user) || user.role === 'admin') {
+        return res.status(403).json({ error: 'Admin accounts must use the Super Admin Portal login' });
       }
-
-      const cleanUser = (user.username || '').trim().toLowerCase();
-      const cleanEmail = (user.email || '').trim().toLowerCase();
-      const effectiveRole = (cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com') ? 'admin' : (user.role || 'user');
-      user.role = effectiveRole;
-
-      const nowIso = new Date().toISOString();
-      user.lastLogin = nowIso;
-      user.authProvider = 'google';
-      if (picture) user.picture = picture;
-
-      // Update in DB and persist
-      const currentDb = db.readDB();
-      const uIdx = currentDb.users.findIndex(u => u.id === user.id);
-      if (uIdx !== -1) {
-        currentDb.users[uIdx].lastLogin = nowIso;
-        currentDb.users[uIdx].authProvider = 'google';
-        currentDb.users[uIdx].role = effectiveRole;
-        if (picture) currentDb.users[uIdx].picture = picture;
-        await db.writeDB(currentDb);
-      }
-
-      const token = jwt.sign({ id: user.id, role: effectiveRole }, JWT_SECRET, { expiresIn: '7d' });
-
-      return res.json({
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          balance: user.balance,
-          bonusBalance: user.bonusBalance,
-          authProvider: 'google',
-          lastLogin: user.lastLogin,
-          picture: picture || user.picture || ''
-        }
-      });
+      user = (await db.recordLogin(user.id, { authProvider: 'google', picture })) || user;
+      return res.json({ token: signToken(user, 'user'), user: publicUser(user, { role: 'user' }) });
     }
 
-    // 5. Create new user for first-time Google sign up
-    let baseUsername = (name || email.split('@')[0])
-      .toLowerCase()
-      .replace(/[^a-z0-9_]/g, '')
-      .slice(0, 14);
-
-    if (baseUsername.length < 3) {
-      baseUsername = `user_${Math.floor(1000 + Math.random() * 9000)}`;
+    let base = name.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 14);
+    if (base.length < 3) base = `user_${Math.floor(1000 + Math.random() * 9000)}`;
+    let finalUsername = base;
+    for (let i = 1; await db.findUserByUsername(finalUsername); i++) {
+      finalUsername = `${base.slice(0, 10)}_${i}`;
     }
-
-    let finalUsername = baseUsername;
-    let counter = 1;
-    while (db.findUserByUsername(finalUsername)) {
-      finalUsername = `${baseUsername.slice(0, 10)}_${counter++}`;
-    }
-
-    const randomPassword = require('crypto').randomBytes(16).toString('hex');
-    const isMasterAdmin = (finalUsername.toLowerCase() === 'saqib_admin' || email === '60secscriptdoc@gmail.com');
-    const newUserRole = isMasterAdmin ? 'admin' : 'user';
-
     const newUser = await db.createUser({
       username: finalUsername,
-      email: email,
-      password: randomPassword,
-      role: newUserRole,
-      initialBalance: 0.0, // Strictly PKR 0.0 (NO BONUS)
+      email,
+      password: crypto.randomBytes(16).toString('hex'),
+      role: 'user',
+      initialBalance: 0,
       authProvider: 'google',
-      picture: picture || '',
+      picture,
       lastLogin: new Date().toISOString()
     });
-
-    const token = jwt.sign({ id: newUser.id, role: newUser.role }, JWT_SECRET, { expiresIn: '7d' });
-
-    return res.json({
-      token,
-      user: {
-        id: newUser.id,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role,
-        balance: newUser.balance,
-        bonusBalance: newUser.bonusBalance,
-        authProvider: 'google',
-        lastLogin: newUser.lastLogin,
-        picture: picture || ''
-      }
-    });
+    res.json({ token: signToken(newUser, 'user'), user: publicUser(newUser, { role: 'user' }) });
   } catch (err) {
-    console.error('Google auth route error:', err);
-    res.status(500).json({ error: err.message || 'Google authentication failed' });
+    console.error('Google auth route error:', err.message);
+    res.status(500).json({ error: 'Google authentication failed' });
   }
 });
 
-// Current User profile & fresh balance
+// Current user profile & fresh balance
 router.get('/me', authenticateToken, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  if (db.syncWithCloud) await db.syncWithCloud(true);
-  const freshUser = db.findUserById(req.user.id) || req.user;
-  res.json({
-    user: {
-      id: freshUser.id,
-      username: freshUser.username,
-      email: freshUser.email,
-      role: freshUser.role,
-      balance: Number(freshUser.balance !== undefined ? freshUser.balance : 0),
-      bonusBalance: Number(freshUser.bonusBalance !== undefined ? freshUser.bonusBalance : 0),
-      balanceUpdatedAt: freshUser.balanceUpdatedAt || 0,
-      version: freshUser.version || 0,
-      authProvider: freshUser.authProvider || (freshUser.email?.includes('@gmail.com') ? 'google' : 'email'),
-      lastLogin: freshUser.lastLogin || freshUser.createdAt || null,
-      picture: freshUser.picture || ''
+  res.json({ user: publicUser(req.user) });
+});
+
+// Change password (players)
+router.post('/change-password', authenticateToken, async (req, res) => {
+  try {
+    const current = String(req.body.currentPassword || '');
+    const next = String(req.body.newPassword || '');
+    if (db.isSuperAdmin(req.user)) {
+      return res.status(400).json({ error: 'Super admin password is managed in the server environment (ADMIN_PASSWORD).' });
     }
-  });
+    if (next.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    const user = await db.findUserById(req.user.id);
+    if (!user || !bcrypt.compareSync(current, user.passwordHash)) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    await db.setPassword(user.id, next);
+    res.json({ success: true, message: 'Password updated' });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not update password' });
+  }
 });
 
 module.exports = {

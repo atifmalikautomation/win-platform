@@ -1,90 +1,75 @@
-import React from 'react';
-import { X, Flame } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { X } from 'lucide-react';
+
+const STEPS = [
+  {
+    title: 'Place a bet',
+    text: 'Enter an amount (or tap a quick chip) and press BET before take-off. You can use both panels to play two bets in the same round. If the round is already flying, your bet is queued for the next round — press CANCEL to remove it.'
+  },
+  {
+    title: 'Watch the plane climb',
+    text: 'When the plane takes off the multiplier starts at 1.00x and grows. Your possible win (bet × multiplier) is shown live on the CASH OUT button.'
+  },
+  {
+    title: 'Cash out in time',
+    text: 'Press CASH OUT before the plane flies away to win bet × multiplier. If it flies away first, the bet is lost. Turn on Auto cash out (Auto tab) and the server will cash out for you at your target — even if you close the tab.'
+  },
+  {
+    title: 'Provably fair',
+    text: 'Each round’s SHA-256 hash is shown before take-off and its seed is revealed after the crash. Tap any result in the history bar to verify it yourself in the browser.'
+  }
+];
 
 export default function HowToPlayModal({ isOpen, onClose }) {
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="relative w-full max-w-lg bg-[#12151e] border border-[#1e2536] rounded-2xl p-5 sm:p-7 shadow-2xl">
-        
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-5 right-5 p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-[#1a202f] transition-colors"
-        >
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="htp-title"
+        onClick={(e) => e.stopPropagation()}
+        className="animate-sheet relative w-full sm:max-w-lg bg-[#1b1c1d] border border-white/10 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
+      >
+        <button onClick={onClose} aria-label="Close" className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-white/5">
           <X className="w-5 h-5" />
         </button>
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-[#1a68ff]/15 border border-[#1a68ff]/30 flex items-center justify-center text-[#1a68ff]">
-            <Flame className="w-5 h-5 text-[#ff9800]" />
-          </div>
+        <div className="flex items-center gap-3 mb-5 pr-8">
+          <img src="/aviator_plane.png" alt="" className="w-12 h-auto" />
           <div>
-            <h2 className="text-lg font-black text-white font-heading">How to Play Aviator X?</h2>
-            <p className="text-xs text-slate-400">Official rules & flight mechanics</p>
+            <h2 id="htp-title" className="text-lg font-extrabold text-white font-heading">How to play Aviator</h2>
+            <p className="text-xs text-zinc-400">Rules in 30 seconds</p>
           </div>
         </div>
 
-        {/* Steps */}
-        <div className="space-y-3.5 text-xs text-slate-300">
-          <div className="p-3.5 rounded-xl bg-[#0b0e15] border border-[#181d2a] flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-[#1a68ff] text-white flex items-center justify-center font-bold font-heading shrink-0 text-xs mt-0.5">
-              1
-            </div>
-            <div>
-              <h3 className="font-bold text-white font-heading text-sm mb-0.5">Place Your Bet</h3>
-              <p className="text-slate-400 leading-relaxed">
-                Choose your bet amount before the red monoplane takes off. You can place <strong className="text-white">two bets simultaneously</strong> using Bet Console 1 and 2!
-              </p>
-            </div>
-          </div>
+        <ol className="space-y-2.5">
+          {STEPS.map((s, i) => (
+            <li key={s.title} className="p-3.5 rounded-xl bg-[#141516] border border-white/[0.06] flex items-start gap-3">
+              <span className="w-6 h-6 rounded-full bg-[#e50539] text-white flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">{i + 1}</span>
+              <div>
+                <h3 className="font-bold text-white font-heading text-sm mb-0.5">{s.title}</h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">{s.text}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
 
-          <div className="p-3.5 rounded-xl bg-[#0b0e15] border border-[#181d2a] flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-[#ffb800] text-slate-950 flex items-center justify-center font-black font-heading shrink-0 text-xs mt-0.5">
-              2
-            </div>
-            <div>
-              <h3 className="font-bold text-white font-heading text-sm mb-0.5">Watch Multiplier Grow</h3>
-              <p className="text-slate-400 leading-relaxed">
-                As the Aviator climbs along the red flight curve, the multiplier continuously increases from <span className="font-mono text-cyan-400 font-bold">1.00x</span> up to <span className="font-mono text-amber-400 font-bold">100.00x+</span>.
-              </p>
-            </div>
-          </div>
+        <p className="mt-4 text-[11px] text-zinc-500 leading-relaxed">
+          18+ only. Play with money you can afford to lose. Results are random — no strategy guarantees a win.
+        </p>
 
-          <div className="p-3.5 rounded-xl bg-[#0b0e15] border border-[#181d2a] flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-[#00c638] text-slate-950 flex items-center justify-center font-black font-heading shrink-0 text-xs mt-0.5">
-              3
-            </div>
-            <div>
-              <h3 className="font-bold text-white font-heading text-sm mb-0.5">Cash Out Before It Flew Away!</h3>
-              <p className="text-slate-400 leading-relaxed">
-                Click <strong className="text-[#ffb800]">CASH OUT</strong> at any moment to lock in your winnings. If the airplane flies away before you cash out, the round is lost.
-              </p>
-            </div>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-[#0b0e15] border border-[#181d2a] flex items-start gap-3">
-            <div className="w-6 h-6 rounded-full bg-[#9d4edd] text-white flex items-center justify-center font-bold font-heading shrink-0 text-xs mt-0.5">
-              4
-            </div>
-            <div>
-              <h3 className="font-bold text-white font-heading text-sm mb-0.5">Provably Fair Algorithm</h3>
-              <p className="text-slate-400 leading-relaxed">
-                Every round outcome is pre-determined using cryptographic SHA-256 HMAC algorithms. The result is 100% fair and mathematically verifiable by anyone.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="btn-bet-green w-full py-3 rounded-xl font-heading font-black text-xs tracking-wider uppercase mt-5"
-        >
-          Got It, Let's Play!
+        <button onClick={onClose} className="btn-primary w-full py-3 mt-4 text-sm tracking-wide uppercase">
+          Got it
         </button>
-
       </div>
     </div>
   );

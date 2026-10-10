@@ -49,30 +49,42 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
   const [forcedMultiplierInput, setForcedMultiplierInput] = useState('');
   const [minesStatus, setMinesStatus] = useState({ sessions: [], riggingConfig: {} });
 
+  const flash = (type, text, ms = 3500) => {
+    setMessage({ type, text });
+    setTimeout(() => setMessage(null), ms);
+  };
+
+  const authHeaders = () => ({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${localStorage.getItem('luckywin_token')}`
+  });
+
+  // POST/PUT/DELETE helper that surfaces the server's error message
+  const adminRequest = async (method, url, body) => {
+    const res = await fetch(url, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || `Request failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  };
+
   const handleResetAllData = async () => {
-    if (!window.confirm('⚠️ Confirm Reset to 0: Total Wagered, Payouts, House Profit, Transactions, aur Balances fresh 0 ho jayenge. Proceed?')) {
+    const typed = window.prompt('This resets total wagered, payouts, house profit, cashier requests and ALL balances to 0.\n\nType RESET to confirm:');
+    if (typed === null) return;
+    if (typed.trim() !== 'RESET') {
+      flash('error', 'Reset cancelled — you must type RESET exactly.');
       return;
     }
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch('/api/admin/reset-stats', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        }
-      });
-      const data = await res.json();
-      if (res.ok) {
-        fetchAdminData();
-        setMessage({ type: 'success', text: '✅ Platform data & stats successfully reset to 0 (Fresh Start)!' });
-        setTimeout(() => setMessage(null), 4000);
-        if (onBalanceUpdate) onBalanceUpdate(0);
-      } else {
-        alert(data.error || 'Failed to reset platform data');
-      }
+      await adminRequest('POST', '/api/admin/reset-stats', { confirm: 'RESET' });
+      fetchAdminData();
+      flash('success', 'Platform stats, cashier requests and balances were reset to 0.', 4000);
+      if (onBalanceUpdate) onBalanceUpdate(0);
     } catch (err) {
-      alert(err.message);
+      flash('error', err.message || 'Failed to reset platform data');
     }
   };
 
@@ -83,21 +95,13 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
   const fetchAdminData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const headers = {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      };
-
       const safeFetch = async (url) => {
         try {
-          const res = await fetch(url, { headers });
+          const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`, { headers: authHeaders(), cache: 'no-store' });
           if (!res.ok) return null;
           const ct = res.headers.get('content-type');
-          if (ct && ct.includes('application/json')) {
-            return await res.json();
-          }
-        } catch (e) {}
+          if (ct && ct.includes('application/json')) return await res.json();
+        } catch (e) { /* network error */ }
         return null;
       };
 
@@ -107,108 +111,17 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
         safeFetch('/api/admin/users')
       ]);
 
+      if (!statsData && !txData && !usersData) {
+        flash('error', 'Could not load admin data. Check your connection and try Refresh.', 5000);
+      }
       if (statsData?.stats) setStats(statsData.stats);
-      if (statsData?.settings) setSettings(statsData.settings);
+      if (statsData?.settings) setSettings(prev => ({ ...prev, ...statsData.settings }));
+      if (usersData && Array.isArray(usersData.users)) setUsersList(usersData.users);
+      if (txData && Array.isArray(txData.transactions)) setTransactions(txData.transactions);
 
-      // Handle users merging (remote server + local storage registrations)
-      let combinedUsers = (usersData && Array.isArray(usersData.users)) ? [...usersData.users] : [];
-      const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-
-      localUsers.forEach(lu => {
-        const uEmail = (lu.email || '').toLowerCase();
-        const uName = (lu.username || '').toLowerCase();
-        const matchIdx = combinedUsers.findIndex(u => 
-          u.id === lu.id || 
-          (uEmail && u.email && u.email.toLowerCase() === uEmail) ||
-          (uName && u.username && u.username.toLowerCase() === uName)
-        );
-        if (matchIdx === -1) {
-          combinedUsers.push({
-            id: lu.id,
-            username: lu.username,
-            email: lu.email || '',
-            role: lu.role || 'user',
-            balance: lu.balance !== undefined ? lu.balance : 0.0,
-            bonusBalance: lu.bonusBalance || 0.0,
-            createdAt: lu.createdAt || new Date().toISOString(),
-            lastLogin: lu.lastLogin || lu.createdAt || new Date().toISOString(),
-            authProvider: lu.authProvider || lu.provider || (uEmail.includes('@gmail.com') ? 'google' : 'email'),
-            picture: lu.picture || '',
-            isBanned: !!lu.isBanned
-          });
-        } else {
-          const existing = combinedUsers[matchIdx];
-          if (!existing.email && lu.email) existing.email = lu.email;
-          if (!existing.lastLogin && lu.lastLogin) existing.lastLogin = lu.lastLogin;
-          if (!existing.authProvider && (lu.authProvider || lu.provider)) {
-            existing.authProvider = lu.authProvider || lu.provider;
-          }
-          if (!existing.picture && lu.picture) existing.picture = lu.picture;
-        }
-      });
-
-      // Default demo accounts if empty
-      if (combinedUsers.length === 0) {
-        combinedUsers = [
-          {
-            id: 'usr_saqib_admin',
-            username: 'saqib_admin',
-            email: '60secscriptdoc@gmail.com',
-            role: 'admin',
-            balance: 100000.0,
-            bonusBalance: 0.0,
-            createdAt: '2026-09-18T00:00:00.000Z',
-            lastLogin: new Date().toISOString(),
-            authProvider: 'google',
-            isBanned: false
-          },
-          {
-            id: 'usr_demo',
-            username: 'LuckyPlayer',
-            email: 'player@example.com',
-            role: 'user',
-            balance: 0.0,
-            bonusBalance: 0.0,
-            createdAt: '2026-09-18T00:00:00.000Z',
-            lastLogin: new Date().toISOString(),
-            authProvider: 'email',
-            isBanned: false
-          }
-        ];
-      }
-
-      setUsersList(combinedUsers);
-
-      // If local users exist, background sync to server
-      if (localUsers.length > 0 && token) {
-        fetch('/api/admin/sync-users', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ users: localUsers })
-        }).catch(() => {});
-      }
-
-      // Handle transactions merging
-      let combinedTx = (txData && Array.isArray(txData.transactions)) ? [...txData.transactions] : [];
-      const localTx = JSON.parse(localStorage.getItem('luckywin_local_transactions') || '[]');
-      localTx.forEach(lt => {
-        if (!combinedTx.some(t => t.id === lt.id)) {
-          combinedTx.unshift(lt);
-        }
-      });
-      setTransactions(combinedTx);
-
-      // Overview fallback stats
-      if (!statsData?.stats) {
-        const totalWagered = parseFloat(localStorage.getItem('luckywin_stat_wagered') || '0');
-        const totalPayouts = parseFloat(localStorage.getItem('luckywin_stat_payouts') || '0');
-        setStats({
-          totalWagered,
-          totalPayouts,
-          grossGamingRevenue: totalWagered - totalPayouts,
-          activeUsers: combinedUsers.length
-        });
-      }
+      // Remove legacy offline caches (never trusted any more)
+      localStorage.removeItem('luckywin_local_users');
+      localStorage.removeItem('luckywin_local_transactions');
     } catch (err) {
       console.error('Admin fetch error:', err);
     } finally {
@@ -226,13 +139,16 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
     let alive = true;
     const fetchStatus = async () => {
       try {
-        const token = localStorage.getItem('luckywin_token');
         const res = await fetch(`/api/admin/game-control/aviator?_t=${Date.now()}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: authHeaders(),
           cache: 'no-store'
         });
-        if (res.ok && alive) setAviatorStatus(await res.json());
-      } catch (err) {}
+        if (res.ok && alive) {
+          const data = await res.json();
+          setAviatorStatus(data);
+          if (typeof data?.houseEdge === 'number') setSettings(prev => (prev.houseEdge === data.houseEdge ? prev : { ...prev, houseEdge: data.houseEdge }));
+        }
+      } catch (err) { /* keep last status */ }
     };
     fetchStatus();
     const interval = setInterval(fetchStatus, 1000);
@@ -242,158 +158,86 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
   const aviatorAction = async (path, body, confirmText) => {
     if (confirmText && !window.confirm(confirmText)) return;
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch(`/api/admin/game-control/aviator/${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: body ? JSON.stringify(body) : undefined
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage({ type: 'success', text: data.message });
-      } else {
-        setMessage({ type: 'error', text: data.error || 'Action failed' });
-      }
-      setTimeout(() => setMessage(null), 4000);
+      const data = await adminRequest('POST', `/api/admin/game-control/aviator/${path}`, body);
+      flash('success', data.message || 'Done', 4000);
     } catch (err) {
-      setMessage({ type: 'error', text: err.message });
+      flash('error', err.message || 'Action failed', 4000);
     }
   };
 
   const handleSaveSettings = async (e) => {
     e.preventDefault();
+    const errors = [];
+    const notes = [];
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-      const res = await fetch('/api/admin/settings', {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(settings)
-      });
-      await res.json();
-      // House edge for Aviator applies from the NEXT round and is shown publicly as RTP.
-      const edgeRes = await fetch('/api/admin/game-control/aviator/house-edge', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ edge: Number(settings.houseEdge) })
-      });
-      const edgeData = await edgeRes.json();
-      if (res.ok && edgeRes.ok) {
-        setMessage({ type: 'success', text: `Settings saved. ${edgeData.message}` });
-      } else {
-        setMessage({ type: 'error', text: edgeData.error || 'Could not save settings' });
-      }
-      setTimeout(() => setMessage(null), 4000);
+      const payload = {
+        minBet: Number(settings.minBet),
+        maxBet: Number(settings.maxBet),
+        maxPayout: Number(settings.maxPayout)
+      };
+      if (typeof settings.maintenance === 'boolean') payload.maintenance = settings.maintenance;
+      const data = await adminRequest('PUT', '/api/admin/settings', payload);
+      notes.push(data.message || 'Limits saved.');
     } catch (err) {
-      setMessage({ type: 'error', text: err.message });
+      errors.push(err.message);
     }
+    // House edge for Aviator applies from the NEXT round and is shown publicly as RTP.
+    try {
+      const edge = Number(settings.houseEdge);
+      if (!(edge >= 1 && edge <= 10)) throw new Error('House edge must be between 1% and 10%');
+      const data = await adminRequest('POST', '/api/admin/game-control/aviator/house-edge', { edge });
+      notes.push(data.message || 'House edge saved.');
+    } catch (err) {
+      errors.push(err.message);
+    }
+    if (errors.length) flash('error', errors.join(' • '), 5000);
+    else flash('success', notes.join(' '), 4000);
   };
 
   const handleTransactionAction = async (txId, action) => {
     try {
-      const token = localStorage.getItem('luckywin_token');
-      await fetch(`/api/admin/transactions/${txId}/action`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ action })
-      });
-    } catch (err) {}
-
-    // Immediate local update fallback
-    const localTx = JSON.parse(localStorage.getItem('luckywin_local_transactions') || '[]');
-    const idx = localTx.findIndex(t => t.id === txId);
-    if (idx !== -1) {
-      localTx[idx].status = action === 'approve' ? 'approved' : 'rejected';
-      localStorage.setItem('luckywin_local_transactions', JSON.stringify(localTx));
-
-      // If approved deposit, credit user balance
-      if (action === 'approve' && localTx[idx].type === 'deposit') {
-        const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-        const uIdx = localUsers.findIndex(u => u.id === localTx[idx].userId || u.username === localTx[idx].username);
-        if (uIdx !== -1) {
-          localUsers[uIdx].balance = (localUsers[uIdx].balance || 0) + Number(localTx[idx].amount || 0);
-          localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
-        }
-      }
+      const data = await adminRequest('POST', `/api/admin/transactions/${txId}/action`, { action });
+      flash('success', data.message || `Transaction ${action === 'approve' ? 'approved' : 'rejected'}.`, 3000);
+    } catch (err) {
+      flash('error', err.message || 'Could not update the transaction');
     }
-
     fetchAdminData();
-    setMessage({ type: 'success', text: `Transaction #${txId} was ${action}d!` });
-    setTimeout(() => setMessage(null), 3000);
   };
 
   const handleUserBalanceAdjust = async (e) => {
     e.preventDefault();
     if (!selectedUser) return;
     const val = Number(adjustAmount);
-    if (isNaN(val)) return alert('Enter a valid numeric amount');
+    if (!Number.isFinite(val)) return flash('error', 'Enter a valid numeric amount');
 
     const action = adjustMode === 'set' ? 'set_balance' : 'adjust_balance';
-    let finalBal = adjustMode === 'set'
-      ? Math.max(0, parseFloat(val.toFixed(2)))
-      : Math.max(0, parseFloat(((selectedUser.balance || 0) + val).toFixed(2)));
-
     try {
-      const token = localStorage.getItem('luckywin_token');
-      const res = await fetch(`/api/admin/users/${selectedUser.id}/action`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          action,
-          amount: val
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.newBalance !== undefined) {
-          finalBal = Number(data.newBalance);
-        }
+      const data = await adminRequest('POST', `/api/admin/users/${selectedUser.id}/action`, { action, amount: val });
+      const finalBal = data.newBalance !== undefined
+        ? Number(data.newBalance)
+        : (data.user && data.user.balance !== undefined ? Number(data.user.balance) : null);
+      if (finalBal !== null) {
+        setUsersList(prev => prev.map(u => (u.id === selectedUser.id ? { ...u, balance: finalBal } : u)));
+        if (selectedUser.id === user?.id && onBalanceUpdate) onBalanceUpdate(finalBal);
+      } else {
+        fetchAdminData();
       }
-    } catch (err) {}
-
-    // Immediate local cache update
-    const nowTS = Date.now();
-    const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-    const idx = localUsers.findIndex(u => u.id === selectedUser.id || u.username === selectedUser.username);
-    if (idx !== -1) {
-      localUsers[idx].balance = finalBal;
-      localUsers[idx].balanceUpdatedAt = nowTS;
-      localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
-    } else {
-      localUsers.push({ ...selectedUser, balance: finalBal, balanceUpdatedAt: nowTS });
-      localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
+      flash('success', `Balance updated: ${selectedUser.username}${finalBal !== null ? ` now has PKR ${finalBal.toLocaleString()}` : ''}`);
+      setSelectedUser(null);
+    } catch (err) {
+      flash('error', err.message || 'Could not update balance');
     }
-
-    setUsersList(prev => prev.map(u => u.id === selectedUser.id ? { ...u, balance: finalBal, balanceUpdatedAt: nowTS } : u));
-    
-    // If active user on this tab is being adjusted:
-    if (selectedUser.id === user?.id && onBalanceUpdate) {
-      onBalanceUpdate(finalBal);
-    }
-
-    // Broadcast instant balance update event
-    window.dispatchEvent(new CustomEvent('platform_balance_sync', { detail: finalBal }));
-
-    setSelectedUser(null);
-    setMessage({ type: 'success', text: `✅ Balance updated: ${selectedUser.username} now has PKR ${finalBal.toLocaleString()}` });
-    setTimeout(() => setMessage(null), 3500);
   };
 
   const handleDeleteUser = async (u) => {
     const cleanUser = (u.username || '').toLowerCase();
     const cleanEmail = (u.email || '').toLowerCase();
     if (u.role === 'admin' || cleanUser === 'saqib_admin' || cleanEmail === '60secscriptdoc@gmail.com' || cleanUser.includes('admin')) {
-      alert('⚠️ Super Admin account cannot be deleted!');
+      flash('error', 'Admin accounts cannot be deleted.');
       return;
     }
 
-    if (!window.confirm(`⚠️ Confirm Permanent Delete: Kya aap waqai user "${u.username}" (${u.email || 'No email'}) ko platform se mukammal delete karna chahte hain? User ka tamam balance aur data delete ho jayega.`)) {
+    if (!window.confirm(`Permanently delete "${u.username}" (${u.email || 'no email'})? Their balance and data will be removed.`)) {
       return;
     }
 
@@ -406,52 +250,27 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
       if (!res.ok) {
         res = await fetch(`/api/admin/users/${u.id}/action`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: authHeaders(),
           body: JSON.stringify({ action: 'delete' })
         });
       }
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to delete user');
-
-      // Remove from usersList
       setUsersList(prev => prev.filter(userItem => userItem.id !== u.id));
-
-      // Remove from localStorage
-      const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-      const updated = localUsers.filter(userItem => userItem.id !== u.id && userItem.username !== u.username);
-      localStorage.setItem('luckywin_local_users', JSON.stringify(updated));
-
-      setMessage({ type: 'success', text: `🗑️ User "${u.username}" was permanently deleted!` });
-      setTimeout(() => setMessage(null), 3500);
+      flash('success', `User "${u.username}" was deleted.`);
     } catch (err) {
-      alert(err.message || 'Error deleting user');
+      flash('error', err.message || 'Error deleting user');
     }
   };
 
   const handleToggleBan = async (userId, currentBanned) => {
     try {
-      const token = localStorage.getItem('luckywin_token');
-      await fetch(`/api/admin/users/${userId}/action`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          isBanned: !currentBanned
-        })
-      });
-    } catch (err) {}
-
-    const localUsers = JSON.parse(localStorage.getItem('luckywin_local_users') || '[]');
-    const idx = localUsers.findIndex(u => u.id === userId);
-    if (idx !== -1) {
-      localUsers[idx].isBanned = !currentBanned;
-      localStorage.setItem('luckywin_local_users', JSON.stringify(localUsers));
+      await adminRequest('POST', `/api/admin/users/${userId}/action`, { isBanned: !currentBanned });
+      setUsersList(prev => prev.map(u => (u.id === userId ? { ...u, isBanned: !currentBanned } : u)));
+      flash('success', `Account ${!currentBanned ? 'suspended' : 're-activated'}.`, 3000);
+    } catch (err) {
+      flash('error', err.message || 'Could not update account status');
     }
-    setUsersList(prev => prev.map(u => u.id === userId ? { ...u, isBanned: !currentBanned } : u));
-    setMessage({ type: 'success', text: `User account status updated: ${!currentBanned ? 'BANNED' : 'ACTIVE'}` });
-    setTimeout(() => setMessage(null), 3000);
   };
 
   const pendingTxCount = transactions.filter(t => t.status === 'pending').length;
@@ -460,7 +279,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 animate-fadeIn">
       
       {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0e131f] border border-amber-500/30 p-6 rounded-3xl shadow-xl">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#1b1c1d] border border-amber-500/30 p-6 rounded-3xl shadow-xl">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center font-bold">
             <Sliders className="w-6 h-6" />
@@ -479,7 +298,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
         <div className="flex items-center gap-2">
           <button
             onClick={fetchAdminData}
-            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 transition-colors"
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-[#141516] hover:bg-slate-800 border border-white/10 text-xs font-bold text-slate-300 transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
@@ -507,7 +326,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
 
       {/* Overview Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-[#0e131f] border border-slate-800 p-4 rounded-2xl shadow">
+        <div className="bg-[#1b1c1d] border border-white/10 p-4 rounded-2xl shadow">
           <span className="text-xs text-slate-400 font-semibold uppercase block">Total Wagered</span>
           <span className="text-xl font-black text-white font-mono mt-1 block">
             PKR {stats?.totalWagered?.toLocaleString() || '0'}
@@ -515,7 +334,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           <span className="text-[10px] text-cyan-400 mt-1 block">Accumulated gross bets</span>
         </div>
 
-        <div className="bg-[#0e131f] border border-slate-800 p-4 rounded-2xl shadow">
+        <div className="bg-[#1b1c1d] border border-white/10 p-4 rounded-2xl shadow">
           <span className="text-xs text-slate-400 font-semibold uppercase block">Total Payouts</span>
           <span className="text-xl font-black text-white font-mono mt-1 block">
             PKR {stats?.totalPayouts?.toLocaleString() || '0'}
@@ -523,7 +342,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           <span className="text-[10px] text-emerald-400 mt-1 block">Players won balance</span>
         </div>
 
-        <div className="bg-[#0e131f] border border-slate-800 p-4 rounded-2xl shadow">
+        <div className="bg-[#1b1c1d] border border-white/10 p-4 rounded-2xl shadow">
           <span className="text-xs text-slate-400 font-semibold uppercase block">House GGR (Profit)</span>
           <span className="text-xl font-black text-emerald-400 font-mono mt-1 block">
             PKR {stats?.grossGamingRevenue?.toLocaleString() || '0'}
@@ -531,7 +350,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           <span className="text-[10px] text-slate-400 mt-1 block">Net Platform Profit</span>
         </div>
 
-        <div className="bg-[#0e131f] border border-slate-800 p-4 rounded-2xl shadow">
+        <div className="bg-[#1b1c1d] border border-white/10 p-4 rounded-2xl shadow">
           <span className="text-xs text-slate-400 font-semibold uppercase block">Pending Cashier Requests</span>
           <span className="text-xl font-black text-amber-400 font-mono mt-1 block">
             {pendingTxCount} Pending
@@ -540,8 +359,25 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
         </div>
       </div>
 
+      {/* Money flow (real totals from the server) */}
+      {stats && (stats.totalDeposits !== undefined || stats.totalWithdrawals !== undefined || stats.playerBalances !== undefined) && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[
+            { label: 'Approved Deposits', value: stats.totalDeposits, note: 'Total credited to players', cls: 'text-emerald-400' },
+            { label: 'Withdrawals', value: stats.totalWithdrawals, note: 'Total paid / reserved for payout', cls: 'text-sky-300' },
+            { label: 'Player Balances', value: stats.playerBalances, note: 'Liability: sum of all balances', cls: 'text-amber-300' }
+          ].map(c => (
+            <div key={c.label} className="bg-[#1b1c1d] border border-white/[0.06] p-4 rounded-2xl">
+              <span className="text-xs text-zinc-400 font-semibold uppercase block">{c.label}</span>
+              <span className={`text-xl font-black font-mono mt-1 block ${c.cls}`}>PKR {Number(c.value || 0).toLocaleString()}</span>
+              <span className="text-[10px] text-zinc-500 mt-1 block">{c.note}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Tabs */}
-      <div className="flex flex-wrap bg-[#0e131f] p-1.5 rounded-2xl border border-slate-800 gap-2">
+      <div className="flex flex-wrap bg-[#1b1c1d] p-1.5 rounded-2xl border border-white/10 gap-2">
         <button
           onClick={() => setActiveTab('cashier')}
           className={`flex-1 min-w-[140px] py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
@@ -604,14 +440,14 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
 
       {/* TAB 1: CASHIER APPROVALS */}
       {activeTab === 'cashier' && (
-        <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 shadow-xl overflow-x-auto">
+        <div className="bg-[#1b1c1d] border border-white/10 rounded-3xl p-5 shadow-xl overflow-x-auto">
           <h2 className="text-base font-black text-white mb-4">Cashier Deposits & Withdrawals Desk</h2>
           {transactions.length === 0 ? (
             <p className="text-xs text-slate-500 text-center py-8">No cashier transactions logged.</p>
           ) : (
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-slate-800 text-slate-400">
+                <tr className="border-b border-white/10 text-slate-400">
                   <th className="pb-3">Type</th>
                   <th className="pb-3">Player</th>
                   <th className="pb-3">Method</th>
@@ -698,8 +534,8 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
           : paused ? 'Paused' : 'Connecting…';
         return (
           <div className="space-y-5">
-            <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+            <div className="bg-[#1b1c1d] border border-white/10 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/10">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center justify-center">
                     <Flame className="w-5 h-5" />
@@ -720,19 +556,19 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
                   <div className="text-[10px] uppercase text-slate-500 font-bold">Round</div>
                   <div className="text-lg font-black text-white font-mono">#{s?.roundId ?? '—'}</div>
                 </div>
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
                   <div className="text-[10px] uppercase text-slate-500 font-bold">Live</div>
                   <div className="text-lg font-black text-white font-mono">{liveMult}</div>
                 </div>
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
                   <div className="text-[10px] uppercase text-slate-500 font-bold">Bets this round</div>
                   <div className="text-lg font-black text-white font-mono">{s?.roundTotals?.count ?? 0} · PKR {(s?.roundTotals?.wagered ?? 0).toLocaleString()}</div>
                 </div>
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3">
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
                   <div className="text-[10px] uppercase text-slate-500 font-bold">Paid out this round</div>
                   <div className="text-lg font-black text-emerald-300 font-mono">PKR {(s?.roundTotals?.paid ?? 0).toLocaleString()}</div>
                 </div>
@@ -781,7 +617,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                 </div>
               </div>
 
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-3 text-[11px] text-slate-400 flex items-start gap-2">
+              <div className="bg-slate-900/40 border border-white/10 rounded-2xl p-3 text-[11px] text-slate-400 flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <span>
                   Crash point har round ke seed se khud banta hai (provably fair). Admin crash point set ya force nahi kar sakta.
@@ -790,7 +626,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
               </div>
             </div>
 
-            <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 shadow-xl">
+            <div className="bg-[#1b1c1d] border border-white/10 rounded-3xl p-5 shadow-xl">
               <h3 className="text-sm font-black text-white mb-3">Real bets — round #{s?.roundId ?? '—'}</h3>
               {!s?.realBets?.length ? (
                 <p className="text-xs text-slate-500 py-4 text-center">No bets in this round.</p>
@@ -798,7 +634,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs text-left">
                     <thead>
-                      <tr className="text-slate-500 border-b border-slate-800">
+                      <tr className="text-slate-500 border-b border-white/10">
                         <th className="pb-2">Player</th><th className="pb-2">Bet</th><th className="pb-2">Auto</th><th className="pb-2">Status</th><th className="pb-2 text-right">Payout</th>
                       </tr>
                     </thead>
@@ -832,10 +668,10 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
 
       {/* TAB 2: HOUSE EDGE & RTP SETTINGS */}
       {activeTab === 'settings' && (
-        <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-6 shadow-xl max-w-2xl">
+        <div className="bg-[#1b1c1d] border border-white/10 rounded-3xl p-6 shadow-xl max-w-2xl">
           <h2 className="text-base font-black text-white mb-2">Configure Game Economics & Risk</h2>
           <p className="text-xs text-slate-400 mb-6">
-            Adjust the House Edge to control operator profit margins. Changes apply immediately to subsequent game rounds.
+            House edge (1–10%) applies from the next Aviator round and is shown publicly as RTP. Bet limits and maintenance apply immediately.
           </p>
 
           <form onSubmit={handleSaveSettings} className="space-y-5">
@@ -873,7 +709,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                   type="number"
                   value={settings.minBet}
                   onChange={(e) => setSettings(prev => ({ ...prev, minBet: Number(e.target.value) }))}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                  className="w-full bg-[#141516] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
                 />
               </div>
 
@@ -885,7 +721,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                   type="number"
                   value={settings.maxBet}
                   onChange={(e) => setSettings(prev => ({ ...prev, maxBet: Number(e.target.value) }))}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                  className="w-full bg-[#141516] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
                 />
               </div>
             </div>
@@ -898,9 +734,22 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                 type="number"
                 value={settings.maxPayout}
                 onChange={(e) => setSettings(prev => ({ ...prev, maxPayout: Number(e.target.value) }))}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                className="w-full bg-[#141516] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
               />
             </div>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-[#141516] border border-white/10 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!settings.maintenance}
+                onChange={(e) => setSettings(prev => ({ ...prev, maintenance: e.target.checked }))}
+                className="w-4 h-4 accent-amber-500"
+              />
+              <span className="text-xs text-slate-300">
+                <span className="font-bold text-white block">Maintenance mode</span>
+                New bets are rejected while this is on.
+              </span>
+            </label>
 
             <button
               type="submit"
@@ -992,9 +841,9 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
         };
 
         return (
-          <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-5 shadow-xl space-y-5">
+          <div className="bg-[#1b1c1d] border border-white/10 rounded-3xl p-5 shadow-xl space-y-5">
             {/* Header with Title & Stats */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/10">
               <div>
                 <h2 className="text-base font-black text-white flex items-center gap-2">
                   <Users className="w-5 h-5 text-amber-400" />
@@ -1032,7 +881,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                 <button
                   onClick={fetchAdminData}
                   title="Sync and refresh latest player signups"
-                  className="px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-bold"
+                  className="px-3 py-2.5 rounded-xl bg-[#141516] hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-bold"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   Sync
@@ -1042,7 +891,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
 
             {/* Quick Summary Metric Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="bg-[#090c13] border border-slate-800 p-3.5 rounded-2xl">
+              <div className="bg-[#090c13] border border-white/10 p-3.5 rounded-2xl">
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Accounts</span>
                 <span className="text-lg font-black text-white font-mono mt-0.5 block">{totalCount}</span>
                 <span className="text-[10px] text-slate-500 mt-0.5 block">All platform records</span>
@@ -1070,7 +919,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
             </div>
 
             {/* Filter Tabs */}
-            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1 border-b border-slate-800/80">
+            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1 border-b border-white/10/80">
               <span className="text-xs text-slate-400 font-semibold mr-1">Filter Accounts:</span>
               {[
                 { id: 'all', label: `All Accounts (${totalCount})` },
@@ -1085,7 +934,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                     userFilterTab === tab.id
                       ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'bg-slate-900/90 text-slate-400 hover:text-white border border-slate-800'
+                      : 'bg-slate-900/90 text-slate-400 hover:text-white border border-white/10'
                   }`}
                 >
                   {tab.label}
@@ -1104,7 +953,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                   const isGoogle = isGmailUser(u);
                   const initials = (u.username || u.email || 'U').slice(0, 2).toUpperCase();
                   return (
-                    <div key={u.id} className="bg-[#090d16] border border-slate-800 rounded-2xl p-4 space-y-3 shadow">
+                    <div key={u.id} className="bg-[#090d16] border border-white/10 rounded-2xl p-4 space-y-3 shadow">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2.5">
                           {u.picture ? (
@@ -1141,7 +990,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                       </div>
 
                       {/* Action Buttons: Adjust, Ban, Delete */}
-                      <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                      <div className="flex items-center gap-2 pt-1 border-t border-white/10/80">
                         <button
                           onClick={() => { setSelectedUser(u); setAdjustAmount(u.balance || 0); setAdjustMode('set'); }}
                           className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow text-center"
@@ -1179,7 +1028,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
             <div className="hidden lg:block overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-slate-800 text-slate-400">
+                  <tr className="border-b border-white/10 text-slate-400">
                     <th className="pb-3 pl-1">Player & ID</th>
                     <th className="pb-3">Gmail / Account Info</th>
                     <th className="pb-3">Auth Method</th>
@@ -1402,7 +1251,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
       {/* Adjust Balance Modal */}
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#0e131f] border border-slate-800 rounded-3xl p-6 w-full max-w-sm space-y-4">
+          <div className="bg-[#1b1c1d] border border-white/10 rounded-3xl p-6 w-full max-w-sm space-y-4">
             <div>
               <h3 className="text-sm font-black text-white flex items-center gap-2">
                 <span>Manage Balance: {selectedUser.username}</span>
@@ -1413,7 +1262,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
             </div>
 
             {/* Mode Selector */}
-            <div className="flex bg-[#090c13] p-1 rounded-xl border border-slate-800 text-xs">
+            <div className="flex bg-[#090c13] p-1 rounded-xl border border-white/10 text-xs">
               <button
                 type="button"
                 onClick={() => { setAdjustMode('set'); setAdjustAmount(selectedUser.balance || 0); }}
@@ -1445,7 +1294,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
                   value={adjustAmount}
                   onChange={(e) => setAdjustAmount(e.target.value)}
                   placeholder={adjustMode === 'set' ? 'e.g. 2500' : 'e.g. 500 or -200'}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                  className="w-full bg-[#141516] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
                 />
                 {adjustMode === 'set' && (
                   <span className="text-[10px] text-slate-500 mt-1 block">
@@ -1484,7 +1333,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
           <div className="relative w-full max-w-2xl bg-[#0f1422] border border-[#1e2738] rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[92vh] flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
+            <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
               <div>
                 <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
                   <Eye className="w-5 h-5 text-[#1a68ff]" />
@@ -1505,7 +1354,7 @@ export default function AdminDashboard({ user, onBalanceUpdate }) {
             </div>
 
             {/* Image Preview */}
-            <div className="flex-1 overflow-auto bg-[#07090e] border border-slate-800/80 rounded-2xl p-2 flex items-center justify-center min-h-[280px] max-h-[52vh]">
+            <div className="flex-1 overflow-auto bg-[#07090e] border border-white/10/80 rounded-2xl p-2 flex items-center justify-center min-h-[280px] max-h-[52vh]">
               {viewingScreenshotTx.proofScreenshot ? (
                 <img
                   src={viewingScreenshotTx.proofScreenshot}

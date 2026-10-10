@@ -19,9 +19,11 @@
 //    a publicly displayed house edge for future rounds.
 // ============================================================================
 const crypto = require('crypto');
-const blob = require('./blobStore');
+const db = require('./db');
 
-const CONTROL_FILE = 'skywin-aviator-control.json';
+// Stored in Postgres (kv table). The old Vercel Blob copy was CDN-cached, so
+// instances could read a stale control document and drift apart.
+const CONTROL_KEY = 'aviator-control';
 const BETTING_MS = 6000;          // betting window before take-off
 const POST_CRASH_MS = 3500;       // "flew away" screen before next round
 const GROWTH = 0.09;              // multiplier = e^(GROWTH * seconds)  (2x ≈ 7.7s, 10x ≈ 25.6s)
@@ -106,17 +108,24 @@ async function loadControl(force = false) {
   if (!force && controlLoaded && Date.now() - controlLoadedAt < CONTROL_TTL_MS) return control;
   if (inflightLoad) return inflightLoad;
   inflightLoad = (async () => {
-    const res = await blob.readJson(CONTROL_FILE);
-    if (res.ok && res.data && res.data.anchor) {
-      if (!controlLoaded || res.data.version !== control.version) {
-        control = normalize(res.data);
+    let doc = null;
+    let ok = false;
+    try {
+      doc = await db.kvGet(CONTROL_KEY);
+      ok = true;
+    } catch (e) {
+      console.error('Aviator control read failed:', e.message);
+    }
+    if (ok && doc && doc.anchor) {
+      if (!controlLoaded || doc.version !== control.version) {
+        control = normalize(doc);
         resetCursor();
       }
-    } else if (res.ok && res.notFound && !controlLoaded) {
+    } else if (ok && !doc && !controlLoaded) {
       control = defaultControl();
       resetCursor();
     }
-    controlLoaded = controlLoaded || res.ok;
+    controlLoaded = controlLoaded || ok;
     controlLoadedAt = Date.now();
     return control;
   })();
@@ -298,8 +307,11 @@ async function mutateControl(mutator) {
   next.version = now;
   next.updatedAt = new Date(now).toISOString();
 
-  const saved = await blob.writeJson(CONTROL_FILE, next);
-  if (!saved && blob.isConfigured()) throw new Error('Could not save Aviator control. Please try again.');
+  try {
+    await db.kvSet(CONTROL_KEY, next);
+  } catch (e) {
+    throw new Error('Could not save Aviator control. Please try again.');
+  }
   control = next;
   controlLoaded = true;
   controlLoadedAt = Date.now();
@@ -354,7 +366,6 @@ async function maybeRebase() {
   const now = Date.now();
   if (now - control.anchor.startTime < REBASE_AFTER_MS) return;
   if (now - lastRebaseAttempt < 10 * 60 * 1000) return;
-  if (!blob.isConfigured()) return;
   lastRebaseAttempt = now;
   try {
     await mutateControl(() => null);

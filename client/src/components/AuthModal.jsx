@@ -22,6 +22,9 @@ const GoogleIcon = () => (
   </svg>
 );
 
+const USERNAME_RE = /^[A-Za-z0-9_.]{3,20}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAuthSuccess }) {
   const [mode, setMode] = useState(initialMode); // 'login' | 'register'
   const [isAdminMode, setIsAdminMode] = useState(false);
@@ -162,7 +165,6 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
 
     const cleanUsername = username.trim();
     const cleanEmail = email.trim().toLowerCase();
@@ -173,11 +175,26 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
       cleanUsername.toLowerCase().includes('admin');
 
     if (!isAdminMode && isAttemptingAdmin) {
-      setError('⚠️ Super Admin account player login se allow nahi hai. Pehly neechay "Super Admin Portal Login" par click karein.');
-      setLoading(false);
+      setError('Admin accounts must use the "Admin login" option below.');
       return;
     }
 
+    if (mode === 'register' && !isAdminMode) {
+      if (!USERNAME_RE.test(cleanUsername)) {
+        setError('Username must be 3–20 characters: letters, numbers, _ or .');
+        return;
+      }
+      if (!EMAIL_RE.test(cleanEmail)) {
+        setError('Please enter a valid email address');
+        return;
+      }
+      if (cleanPassword.length < 6) {
+        setError('Password must be at least 6 characters');
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
       const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const body = mode === 'login'
@@ -195,7 +212,10 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
         });
 
         const contentType = res.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
+        if (res.status === 429) {
+          const parsed = contentType && contentType.includes('application/json') ? await res.json().catch(() => ({})) : {};
+          serverError = parsed.error || 'Too many attempts. Please wait a few minutes and try again.';
+        } else if (contentType && contentType.includes('application/json')) {
           const parsed = await res.json();
           if (res.ok) {
             data = parsed;
@@ -203,10 +223,10 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
             serverError = parsed.error || 'Authentication failed';
           }
         } else {
-          serverError = 'Server communication error';
+          serverError = 'Server is not responding. Please try again.';
         }
       } catch (fetchErr) {
-        serverError = fetchErr.message;
+        serverError = 'Network error — please check your connection';
       }
 
       // If remote server succeeded, persist user session
@@ -223,210 +243,190 @@ export default function AuthModal({ isOpen, onClose, initialMode = 'login', onAu
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-[#161d2d] to-[#0d121d] border border-[#232f48] shadow-2xl overflow-hidden">
-        {/* Glow Accent */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-20 bg-[#1a68ff]/20 blur-3xl pointer-events-none" />
 
-        {/* Close Button */}
+  const inputCls = 'w-full bg-[#141516] border border-white/10 focus:border-[#e50539] rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none transition-colors';
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-title"
+        onClick={(e) => e.stopPropagation()}
+        className="animate-sheet relative w-full sm:max-w-md p-6 sm:p-7 rounded-t-2xl sm:rounded-2xl bg-[#1b1c1d] border border-white/10 shadow-2xl overflow-hidden max-h-[94vh] overflow-y-auto"
+      >
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-56 h-24 bg-[#e50539]/20 blur-3xl pointer-events-none" />
+
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors"
+          aria-label="Close"
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5"
         >
           <X className="w-5 h-5" />
         </button>
 
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[#1a68ff]/20 border border-[#1a68ff]/30 text-[#1a68ff] mb-3">
-            <Lock className="w-6 h-6" />
-          </div>
-          <h2 className="font-heading font-black text-2xl text-white tracking-tight">
-            {isAdminMode ? 'SkyWin Admin' : (mode === 'login' ? 'Welcome Back' : 'Create Account')}
+        <div className="relative text-center mb-5">
+          <img src="/aviator_plane.png" alt="" className="w-14 h-auto mx-auto mb-2" />
+          <h2 id="auth-title" className="font-heading font-black text-2xl text-white tracking-tight">
+            {isAdminMode ? 'Admin login' : (mode === 'login' ? 'Welcome back' : 'Create your account')}
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            {isAdminMode ? 'Enter authorized credentials' : (mode === 'login' ? 'Login to continue playing' : 'Join thousands of real players in Pakistan')}
+          <p className="text-xs text-zinc-400 mt-1">
+            {isAdminMode ? 'Authorized staff only' : (mode === 'login' ? 'Log in to play Aviator' : 'It takes less than a minute')}
           </p>
         </div>
 
-        {/* Header Tabs */}
-        <div className="flex p-1 mb-5 rounded-2xl bg-[#0b0e17] border border-[#1c2436]">
-          <button
-            type="button"
-            onClick={() => { setMode('login'); setError(''); setShowGooglePrompt(false); }}
-            className={`flex-1 py-2 text-xs font-bold font-heading rounded-xl transition-all ${
-              mode === 'login'
-                ? 'bg-[#1a68ff] text-white shadow-lg'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Login
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode('register'); setError(''); setShowGooglePrompt(false); }}
-            className={`flex-1 py-2 text-xs font-bold font-heading rounded-xl transition-all ${
-              mode === 'register'
-                ? 'bg-[#1a68ff] text-white shadow-lg'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Registration
-          </button>
-        </div>
-
-        {/* Registration Account Info Badge */}
-        {mode === 'register' && !isAdminMode && (
-          <div className="mb-5 p-3 rounded-2xl bg-gradient-to-r from-blue-500/15 via-indigo-500/15 to-purple-500/15 border border-blue-500/30 flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400">
-              <CheckCircle2 className="w-4 h-4" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-blue-300">Official Player Account</p>
-              <p className="text-[11px] text-slate-300">Fast deposits & 24/7 withdrawals via JazzCash, EasyPaisa & Bank</p>
-            </div>
+        {!isAdminMode && (
+          <div role="tablist" className="grid grid-cols-2 p-1 mb-4 rounded-xl bg-[#141516] border border-white/[0.06]">
+            {[{ id: 'login', label: 'Log in' }, { id: 'register', label: 'Sign up' }].map(t => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={mode === t.id}
+                onClick={() => { setMode(t.id); setError(''); setShowGooglePrompt(false); }}
+                className={`py-2 text-sm font-bold rounded-lg transition-colors ${mode === t.id ? 'bg-[#2c2d30] text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* Super Admin Access Banner */}
+        {mode === 'register' && !isAdminMode && (
+          <div className="mb-4 p-3 rounded-xl bg-[#141516] border border-white/[0.06] flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-[#5fd23b] shrink-0 mt-0.5" />
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Deposits and withdrawals in PKR via Easypaisa, reviewed manually. You must be 18 or older to play.
+            </p>
+          </div>
+        )}
+
         {isAdminMode && (
-          <div className="mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-amber-400 text-xs font-bold font-heading">
-              <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>SUPER ADMIN PORTAL</span>
+          <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-amber-300 text-xs font-bold">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              <span>Admin portal</span>
             </div>
             <button
               type="button"
-              onClick={() => {
-                setIsAdminMode(false);
-                setUsername('');
-                setPassword('');
-                setError('');
-              }}
-              className="text-slate-400 hover:text-white text-[11px] underline"
+              onClick={() => { setIsAdminMode(false); setUsername(''); setPassword(''); setError(''); }}
+              className="text-zinc-400 hover:text-white text-[11px] underline"
             >
-              Back to Player
+              Back to player login
             </button>
           </div>
         )}
 
-        {/* Error Alert */}
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center gap-2 text-rose-300 text-xs font-medium">
-            <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+          <div role="alert" className="mb-4 p-3 rounded-xl bg-[#e50539]/10 border border-[#e50539]/30 flex items-center gap-2 text-rose-200 text-xs font-medium">
+            <ShieldAlert className="w-4 h-4 text-[#ff4d6d] shrink-0" />
             {error}
           </div>
         )}
 
-        {/* Google 1-Click Sign-In Section (Player Mode) */}
         {!isAdminMode && import.meta.env.VITE_GOOGLE_CLIENT_ID && (
-          <div className="mb-5">
+          <div className="mb-4">
             <button
               type="button"
               onClick={handleGoogleClick}
               disabled={loading}
-              className="w-full py-3 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs sm:text-sm flex items-center justify-center gap-3 shadow-lg shadow-black/20 hover:shadow-xl transition-all border border-slate-200 active:scale-[0.99] disabled:opacity-50"
+              className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 font-bold text-sm flex items-center justify-center gap-3 transition-colors disabled:opacity-50"
             >
               <GoogleIcon />
-              <span>{mode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
+              <span>{mode === 'login' ? 'Continue with Google' : 'Sign up with Google'}</span>
             </button>
-
-
-
             <div className="relative flex items-center justify-center my-4">
-              <div className="border-t border-[#232f48] w-full" />
-              <span className="bg-[#121724] px-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
-                Or with Username / Password
-              </span>
+              <div className="border-t border-white/10 w-full" />
+              <span className="absolute bg-[#1b1c1d] px-3 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">or</span>
             </div>
           </div>
         )}
 
-        {/* Traditional Credentials Form */}
-        <form onSubmit={handleSubmit} className="space-y-3.5">
+        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
           <div>
-            <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
-              {mode === 'login' ? 'Username or Email' : 'Username'}
+            <label htmlFor="auth-user" className="block text-xs font-semibold text-zinc-400 mb-1.5">
+              {mode === 'login' ? 'Username or email' : 'Username'}
             </label>
             <div className="relative">
               <input
+                id="auth-user"
                 type="text"
                 required
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck="false"
+                maxLength={mode === 'register' ? 20 : 100}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder={mode === 'login' ? 'Enter username or email' : 'Choose a unique username'}
-                className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors pl-11"
+                placeholder={mode === 'login' ? 'Enter username or email' : 'e.g. ali_khan'}
+                className={inputCls}
               />
-              <User className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+              <User className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
             </div>
+            {mode === 'register' && !isAdminMode && (
+              <p className="text-[11px] text-zinc-500 mt-1">3–20 characters: letters, numbers, _ or .</p>
+            )}
           </div>
 
           {mode === 'register' && (
             <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
-                Email Address
-              </label>
+              <label htmlFor="auth-email" className="block text-xs font-semibold text-zinc-400 mb-1.5">Email</label>
               <div className="relative">
                 <input
+                  id="auth-email"
                   type="email"
                   required
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your.email@example.com"
-                  className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors pl-11"
+                  placeholder="you@example.com"
+                  className={inputCls}
                 />
-                <Mail className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+                <Mail className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
               </div>
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
-              Password
-            </label>
+            <label htmlFor="auth-pass" className="block text-xs font-semibold text-zinc-400 mb-1.5">Password</label>
             <div className="relative">
               <input
+                id="auth-pass"
                 type="password"
                 required
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors pl-11"
+                className={inputCls}
               />
-              <Lock className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+              <Lock className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
             </div>
+            {mode === 'register' && !isAdminMode && (
+              <p className="text-[11px] text-zinc-500 mt-1">At least 6 characters.</p>
+            )}
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full mt-2 py-3.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-sm shadow-xl shadow-blue-500/25 transition-all disabled:opacity-50"
-          >
-            {loading ? 'Processing...' : mode === 'login' ? 'LOG IN TO ACCOUNT' : 'CREATE FREE ACCOUNT'}
+          <button type="submit" disabled={loading} className="btn-primary w-full mt-1 py-3.5 text-sm">
+            {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
           </button>
+          {mode === 'register' && (
+            <p className="text-[11px] text-zinc-500 text-center">By creating an account you confirm you are 18+.</p>
+          )}
         </form>
 
-        {/* Super Admin Secure Gateway */}
         {!isAdminMode && mode === 'login' && (
-          <div className="mt-5 pt-4 border-t border-slate-800/80">
+          <div className="mt-5 pt-4 border-t border-white/[0.06] text-center">
             <button
               type="button"
-              onClick={() => {
-                setIsAdminMode(true);
-                setUsername('');
-                setPassword('');
-                setError('');
-                setShowGooglePrompt(false);
-              }}
-              className="w-full py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-xs font-heading font-black text-amber-400 flex items-center justify-center gap-2 transition-all"
+              onClick={() => { setIsAdminMode(true); setUsername(''); setPassword(''); setError(''); setShowGooglePrompt(false); }}
+              className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-zinc-500 hover:text-amber-300"
             >
-              <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>Super Admin Portal Login</span>
+              <ShieldAlert className="w-3.5 h-3.5" />
+              Admin login
             </button>
           </div>
         )}
-
       </div>
     </div>
   );

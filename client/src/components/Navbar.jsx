@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  ShieldCheck, LogOut, Sliders, Bomb,
-  Volume2, VolumeX, Plus, Eye, EyeOff,
-  Menu, Gamepad2
+  ShieldCheck, LogOut, Sliders, Volume2, VolumeX, Plus, Eye, EyeOff,
+  Menu, Gamepad2, ChevronDown, ArrowUpFromLine, Receipt, Lock
 } from 'lucide-react';
 import { soundFx } from '../utils/soundEffects';
+
+export function Brand({ onClick }) {
+  return (
+    <button type="button" onClick={onClick} className="flex items-center gap-2 select-none" aria-label="SkyWin home">
+      <img src="/aviator_plane.png" alt="" className="w-8 h-auto" draggable="false" />
+      <span className="font-heading font-black text-xl tracking-tight leading-none">
+        <span className="text-white">SKY</span><span className="text-[#e50539]">WIN</span>
+      </span>
+    </button>
+  );
+}
 
 export default function Navbar({
   activeTab,
@@ -14,227 +24,190 @@ export default function Navbar({
   onLogout,
   onOpenCashier,
   onOpenProvablyFair,
+  onChangePassword,
   balance,
   onToggleSidebar
 }) {
   const [isMuted, setIsMuted] = useState(soundFx.isMuted);
-  const [hideBalance, setHideBalance] = useState(false);
+  const [hideBalance, setHideBalance] = useState(() => localStorage.getItem('skywin_hide_balance') === '1');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
 
-  const handleToggleMute = () => {
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const close = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', close); window.removeEventListener('keydown', onKey); };
+  }, [menuOpen]);
+
+  const toggleMute = () => {
     const muted = soundFx.toggleMute();
     setIsMuted(muted);
-    if (!muted) {
-      soundFx.playBet();
-    }
+    if (!muted) soundFx.playBet();
+  };
+  const toggleHide = () => {
+    setHideBalance(v => {
+      localStorage.setItem('skywin_hide_balance', v ? '0' : '1');
+      return !v;
+    });
   };
 
+  const tabs = [
+    { id: 'crash', label: 'Aviator', icon: <img src="/aviator_plane.png" alt="" className="w-4 h-auto" /> },
+    { id: 'lobby', label: 'Games', icon: <Gamepad2 className="w-4 h-4" /> }
+  ];
+  if (user?.role === 'admin') tabs.push({ id: 'admin', label: 'Admin', icon: <Sliders className="w-4 h-4" /> });
+
+  const balanceText = hideBalance
+    ? '••••••'
+    : Number(balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   return (
-    <header className="sticky top-0 z-30 bg-[#11141d] border-b border-[#1b212f] px-3 sm:px-6 py-2">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        
-        {/* Left: Sidebar Toggle + SKYWIN Brand & Main Game Tabs */}
-        <div className="flex items-center gap-3 sm:gap-6">
-          
-          {/* Sidebar Hamburger Toggle (Mobile & Tablet Only) */}
+    <header className="sticky top-0 z-40 bg-[#141416]/95 backdrop-blur border-b border-white/[0.06]">
+      <div className="max-w-[1400px] mx-auto h-14 px-2 sm:px-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-4 min-w-0">
           <button
+            type="button"
             onClick={onToggleSidebar}
-            title="Toggle Sidebar"
-            className="lg:hidden p-2 rounded-xl bg-[#0c0f17] border border-[#1a202e] text-slate-400 hover:text-white hover:border-[#2a3449] transition-colors"
+            aria-label="Open menu"
+            className="lg:hidden p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5"
           >
-            <Menu className="w-4 h-4" />
+            <Menu className="w-5 h-5" />
           </button>
+          <div className="lg:hidden"><Brand onClick={() => setActiveTab('crash')} /></div>
 
-          {/* SKYWIN Authentic Brandmark */}
-          <div
-            onClick={() => setActiveTab('crash')}
-            className="flex items-center gap-1.5 cursor-pointer select-none"
-          >
-            <div className="flex items-baseline font-heading font-black text-2xl tracking-tighter leading-none">
-              <span className="text-white text-2xl">SKY</span>
-              <span className="text-[#1a68ff] text-2xl">WIN</span>
-            </div>
-            <span className="text-[9px] text-[#38bdf8] font-bold uppercase tracking-wider font-heading bg-[#16223b] px-1.5 py-0.5 rounded border border-[#203254] hidden sm:inline">
-              PRO
-            </span>
-          </div>
-
-          {/* Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-1 bg-[#0a0c13] p-1 rounded-xl border border-[#161a26]">
-            <button
-              onClick={() => { setActiveTab('crash'); soundFx.playBet(); }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-heading font-bold transition-all ${
-                activeTab === 'crash'
-                  ? 'bg-[#1a68ff] text-white shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <img src="/aviator_plane.png" alt="Aviator" className="w-4 h-3 object-contain" />
-              Aviator X
-            </button>
-
-
-            <button
-              onClick={() => { setActiveTab('lobby'); soundFx.playBet(); }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-heading font-bold transition-all ${
-                activeTab === 'lobby'
-                  ? 'bg-[#1a68ff] text-white shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <Gamepad2 className="w-3.5 h-3.5 text-[#38bdf8]" />
-              Games Lobby
-            </button>
-
-            <button
-              onClick={() => { onOpenProvablyFair(); soundFx.playBet(); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-heading font-semibold text-slate-400 hover:text-slate-200 transition-colors"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
-              Provably Fair
-            </button>
-
-            {user?.role === 'admin' && (
+          <nav className="hidden md:flex items-center gap-1" aria-label="Main">
+            {tabs.map(t => (
               <button
-                onClick={() => { setActiveTab('admin'); soundFx.playBet(); }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-heading font-bold transition-all ${
-                  activeTab === 'admin'
-                    ? 'bg-[#ffb800] text-slate-950 font-black'
-                    : 'text-[#ffb800] hover:bg-[#ffb800]/10'
-                }`}
+                key={t.id}
+                type="button"
+                onClick={() => setActiveTab(t.id)}
+                aria-current={activeTab === t.id ? 'page' : undefined}
+                className={`flex items-center gap-2 h-9 px-3 rounded-lg text-sm font-semibold transition-colors ${
+                  activeTab === t.id ? 'bg-white/[0.08] text-white' : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
+                } ${t.id === 'admin' ? 'text-amber-300' : ''}`}
               >
-                <Sliders className="w-3.5 h-3.5" />
-                Admin Desk
+                {t.icon}{t.label}
               </button>
-            )}
+            ))}
+            <button
+              type="button"
+              onClick={onOpenProvablyFair}
+              className="flex items-center gap-2 h-9 px-3 rounded-lg text-sm font-semibold text-zinc-400 hover:text-white hover:bg-white/[0.04]"
+            >
+              <ShieldCheck className="w-4 h-4" /> Provably fair
+            </button>
           </nav>
         </div>
 
-        {/* Right: Sound, Privacy Eye, Balance Box, Deposit, User */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          
-          {/* Sound Toggle (Hidden on small mobile to give room to deposit/register) */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
-            onClick={handleToggleMute}
-            title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
-            className={`hidden sm:flex p-2 rounded-xl border transition-all ${
-              isMuted
-                ? 'bg-[#0d1017] border-[#1c2230] text-slate-500 hover:text-slate-400'
-                : 'bg-[#1a68ff]/10 border-[#1a68ff]/30 text-[#1a68ff]'
-            }`}
+            type="button"
+            onClick={toggleMute}
+            aria-label={isMuted ? 'Unmute sound' : 'Mute sound'}
+            aria-pressed={!isMuted}
+            className="hidden sm:inline-flex p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5"
           >
-            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {isMuted ? <VolumeX className="w-[18px] h-[18px]" /> : <Volume2 className="w-[18px] h-[18px]" />}
           </button>
 
           {user ? (
             <>
-              {/* Balance Box with Privacy Eye Switcher */}
-              <div className="flex items-center gap-1.5 bg-[#0c0f17] border border-[#1a202e] rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 shrink-0">
-                <div className="flex flex-col text-right">
-                  <span className="hidden sm:inline text-[9px] text-slate-400 font-bold uppercase tracking-wider font-heading leading-none">
-                    PKR Balance
-                  </span>
-                  <span className="text-[#00c638] font-bold text-xs sm:text-sm font-mono leading-tight">
-                    {hideBalance
-                      ? '••••••'
-                      : `PKR ${balance.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
+              <div className="flex items-center h-9 rounded-lg bg-[#1f2023] border border-white/[0.08] pl-2.5 pr-1">
+                <div className="flex flex-col leading-none mr-1">
+                  <span className="hidden sm:block text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Balance</span>
+                  <span className="text-white font-bold text-xs sm:text-sm tabular-nums">
+                    {balanceText} <span className="text-zinc-400 text-[10px] sm:text-xs font-semibold">PKR</span>
                   </span>
                 </div>
-
                 <button
                   type="button"
-                  onClick={() => setHideBalance(!hideBalance)}
-                  title={hideBalance ? 'Show Balance' : 'Hide Balance'}
-                  className="p-1 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                  onClick={toggleHide}
+                  aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
+                  className="p-1 rounded text-zinc-500 hover:text-zinc-200"
                 >
                   {hideBalance ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
 
-              {/* SkyWin Solid Green Deposit Button */}
               <button
+                type="button"
                 onClick={() => onOpenCashier('deposit')}
-                className="btn-bet-green flex items-center gap-1 text-slate-950 font-heading font-black text-xs sm:text-sm px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl shadow-sm shrink-0 whitespace-nowrap"
+                className="btn-bet-green flex items-center gap-1 h-9 px-2.5 sm:px-3.5 text-xs sm:text-sm rounded-lg"
               >
-                <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                <span>Deposit</span>
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span className="hidden xs:inline">Deposit</span>
               </button>
 
-              {/* User Dropdown / Profile */}
-              <div className="flex items-center gap-1.5 pl-1 border-l border-[#1a202e] shrink-0">
-                <div className="hidden sm:flex flex-col text-right">
-                  <span className="text-xs font-bold text-slate-200 leading-tight font-heading truncate max-w-[80px]">{user.username}</span>
-                  <span className="text-[9px] text-slate-500 font-mono">ID: {user.id ? user.id.slice(-5) : '001'}</span>
-                </div>
+              <div className="relative" ref={menuRef}>
                 <button
-                  onClick={onLogout}
-                  title="Logout"
-                  className="p-1.5 sm:p-2 rounded-xl bg-[#0c0f17] border border-[#1a202e] text-slate-400 hover:text-rose-400 transition-colors shrink-0"
+                  type="button"
+                  onClick={() => setMenuOpen(v => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-label="Account menu"
+                  className="flex items-center gap-1 h-9 pl-1 pr-1.5 rounded-lg hover:bg-white/5"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="w-7 h-7 rounded-full bg-[#e50539] text-white flex items-center justify-center text-xs font-bold uppercase">
+                    {(user.username || '?')[0]}
+                  </span>
+                  <ChevronDown className={`hidden sm:block w-4 h-4 text-zinc-400 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
                 </button>
+                {menuOpen && (
+                  <div role="menu" className="toast-in absolute right-0 top-full mt-2 w-56 rounded-xl bg-[#232427] border border-white/10 shadow-2xl p-1.5 z-50">
+                    <div className="px-2.5 py-2 border-b border-white/[0.06] mb-1">
+                      <div className="text-sm font-bold text-white truncate">{user.username}</div>
+                      {user.email && <div className="text-[11px] text-zinc-500 truncate">{user.email}</div>}
+                    </div>
+                    <MenuItem icon={<Plus className="w-4 h-4" />} label="Deposit" onClick={() => { setMenuOpen(false); onOpenCashier('deposit'); }} />
+                    <MenuItem icon={<ArrowUpFromLine className="w-4 h-4" />} label="Withdraw" onClick={() => { setMenuOpen(false); onOpenCashier('withdraw'); }} />
+                    <MenuItem icon={<Receipt className="w-4 h-4" />} label="Transactions" onClick={() => { setMenuOpen(false); onOpenCashier('history'); }} />
+                    {onChangePassword && user.role !== 'admin' && (
+                      <MenuItem icon={<Lock className="w-4 h-4" />} label="Change password" onClick={() => { setMenuOpen(false); onChangePassword(); }} />
+                    )}
+                    <div className="my-1 border-t border-white/[0.06]" />
+                    <MenuItem icon={<LogOut className="w-4 h-4" />} label="Log out" danger onClick={() => { setMenuOpen(false); onLogout(); }} />
+                  </div>
+                )}
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <>
               <button
+                type="button"
                 onClick={() => onOpenAuth('login')}
-                className="text-slate-300 hover:text-white px-2 sm:px-3.5 py-1.5 rounded-xl text-xs font-heading font-bold transition-colors shrink-0 whitespace-nowrap"
+                className="h-9 px-3 rounded-lg text-sm font-semibold text-zinc-200 hover:text-white hover:bg-white/5"
               >
-                Log In
+                Log in
               </button>
               <button
+                type="button"
                 onClick={() => onOpenAuth('register')}
-                className="btn-bet-green text-slate-950 font-heading font-black text-xs px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl shadow-sm shrink-0 whitespace-nowrap"
+                className="btn-primary h-9 px-3 sm:px-4 text-sm rounded-lg"
               >
-                Registration
+                Sign up
               </button>
-            </div>
+            </>
           )}
-
         </div>
-
-      </div>
-
-      {/* Mobile Navigation Bar */}
-      <div className="flex md:hidden items-center justify-around pt-2 mt-2 border-t border-[#181d2a]">
-        <button
-          onClick={() => { setActiveTab('crash'); soundFx.playBet(); }}
-          className={`flex items-center gap-1 text-xs font-heading font-bold px-3 py-1 rounded-lg ${
-            activeTab === 'crash' ? 'bg-[#1a68ff] text-white' : 'text-slate-400'
-          }`}
-        >
-          <img src="/aviator_plane.png" alt="Aviator" className="w-4 h-3 object-contain" />
-          Aviator X
-        </button>
-
-        <button
-          onClick={() => { setActiveTab('lobby'); soundFx.playBet(); }}
-          className={`flex items-center gap-1 text-xs font-heading font-bold px-3 py-1 rounded-lg ${
-            activeTab === 'lobby' ? 'bg-[#1a68ff] text-white' : 'text-slate-400'
-          }`}
-        >
-          <Gamepad2 className="w-3.5 h-3.5 text-[#38bdf8]" />
-          Lobby
-        </button>
-        {user?.role === 'admin' && (
-          <button
-            onClick={() => { setActiveTab('admin'); soundFx.playBet(); }}
-            className={`flex items-center gap-1 text-xs font-heading font-bold px-2 py-1 rounded-lg ${
-              activeTab === 'admin' ? 'bg-[#ffb800] text-slate-950' : 'text-[#ffb800]'
-            }`}
-          >
-            <Sliders className="w-3 h-3" />
-            Admin
-          </button>
-        )}
-        <button
-          onClick={() => { onOpenProvablyFair(); soundFx.playBet(); }}
-          className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1 font-heading"
-        >
-          <ShieldCheck className="w-3.5 h-3.5" />
-          Fair
-        </button>
       </div>
     </header>
+  );
+}
+
+function MenuItem({ icon, label, onClick, danger }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-left ${
+        danger ? 'text-rose-300 hover:bg-[#e50539]/10' : 'text-zinc-200 hover:bg-white/5'
+      }`}
+    >
+      {icon}{label}
+    </button>
   );
 }

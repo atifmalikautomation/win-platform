@@ -1,20 +1,33 @@
 @import "tailwindcss";
 
+@theme {
+  --breakpoint-xs: 400px;
+}
+
 :root {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-heading: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Montserrat', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-heading: 'Montserrat', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --bg: #0e0e10;
+  --surface: #1b1c1d;
+  --surface-2: #232427;
+  --accent: #e50539;
+  --bet: #28a909;
+  --cashout: #d07206;
   color-scheme: dark;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background-color: #0a0c14;
-  color: #f1f5f9;
+  background-color: var(--bg);
+  color: #f4f4f5;
   font-family: var(--font-sans);
   overflow-x: hidden;
-  user-select: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -24,60 +37,128 @@ h1, h2, h3, .font-heading {
   letter-spacing: -0.01em;
 }
 
-/* Gaming Tabular Numbers (Bold, Solid, Beautiful Curves) */
-.font-mono, .font-mono-num {
-  font-family: var(--font-heading), var(--font-sans);
+.font-mono, .font-mono-num, .tabular-nums {
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
 }
 
-/* SkyWin Aviator Bet Buttons */
+button:not(:disabled) { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+:focus-visible {
+  outline: 2px solid #ff4d6d;
+  outline-offset: 2px;
+}
+
+/* Number inputs: hide spinners */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+
+/* ------------------------------------------------------------------ */
+/* Crash game buttons (classic Aviator colours)                         */
+/* ------------------------------------------------------------------ */
+.btn-bet,
+.btn-cashout,
+.btn-cancel {
+  color: #fff;
+  font-family: var(--font-heading);
+  border-width: 1px;
+  transition: filter 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+.btn-bet {
+  background: linear-gradient(180deg, #2fbf0a 0%, #28a909 100%);
+  border-color: #b2f2a3;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 4px 14px rgba(40, 169, 9, 0.25);
+}
+.btn-cashout {
+  background: linear-gradient(180deg, #ef8a12 0%, #d07206 100%);
+  border-color: #ffbd71;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 4px 16px rgba(208, 114, 6, 0.35);
+}
+.btn-cancel {
+  background: linear-gradient(180deg, #e2061f 0%, #cb011a 100%);
+  border-color: #ff7171;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 4px 14px rgba(203, 1, 26, 0.3);
+}
+.btn-bet:hover:not(:disabled),
+.btn-cashout:hover:not(:disabled),
+.btn-cancel:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-bet:active:not(:disabled),
+.btn-cashout:active:not(:disabled),
+.btn-cancel:active:not(:disabled) { transform: scale(0.98); }
+.btn-bet:disabled,
+.btn-cashout:disabled,
+.btn-cancel:disabled { filter: grayscale(0.4) brightness(0.7); }
+
+/* Generic green CTA (deposit / register) */
 .btn-bet-green {
-  background-color: #00c638;
-  color: #000000;
+  background: linear-gradient(180deg, #2fbf0a 0%, #28a909 100%);
+  color: #fff;
   font-family: var(--font-heading);
   font-weight: 800;
   border-radius: 12px;
-  transition: all 0.12s ease;
-  box-shadow: 0 4px 12px rgba(0, 198, 56, 0.25);
+  transition: filter 0.12s ease, transform 0.08s ease;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 4px 12px rgba(40, 169, 9, 0.22);
 }
-.btn-bet-green:hover:not(:disabled) {
-  background-color: #00d93e;
-  box-shadow: 0 4px 16px rgba(0, 198, 56, 0.4);
-}
-.btn-bet-green:active:not(:disabled) {
-  transform: scale(0.98);
-}
+.btn-bet-green:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-bet-green:active:not(:disabled) { transform: scale(0.98); }
 
+/* Primary red CTA */
+.btn-primary {
+  background: linear-gradient(180deg, #f0164a 0%, #e50539 100%);
+  color: #fff;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  border-radius: 12px;
+  transition: filter 0.12s ease, transform 0.08s ease;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 4px 14px rgba(229, 5, 57, 0.25);
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-primary:active:not(:disabled) { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.55; }
+
+/* legacy alias kept for older markup */
 .btn-cashout-gold {
-  background: linear-gradient(180deg, #ffb800 0%, #ff9500 100%);
-  color: #000000;
+  background: linear-gradient(180deg, #ef8a12 0%, #d07206 100%);
+  color: #fff;
   font-family: var(--font-heading);
   font-weight: 900;
   border-radius: 12px;
-  transition: all 0.12s ease;
-  box-shadow: 0 4px 16px rgba(255, 166, 0, 0.35);
-}
-.btn-cashout-gold:hover {
-  background: linear-gradient(180deg, #ffc420 0%, #ffa514 100%);
-  box-shadow: 0 4px 22px rgba(255, 166, 0, 0.5);
-}
-.btn-cashout-gold:active {
-  transform: scale(0.98);
 }
 
-/* Custom Scrollbars */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+/* ------------------------------------------------------------------ */
+/* Animations                                                          */
+/* ------------------------------------------------------------------ */
+@keyframes propeller-spin { to { transform: rotate(360deg); } }
+.animate-propeller { animation: propeller-spin 0.55s linear infinite; transform-origin: 50% 50%; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
 }
-::-webkit-scrollbar-track {
-  background: #090b10;
+.toast-in { animation: toast-in 0.22s ease-out both; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.animate-fadeIn { animation: fade-in 0.18s ease-out both; }
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
 }
-::-webkit-scrollbar-thumb {
-  background: #1f2533;
-  border-radius: 4px;
+.animate-sheet { animation: sheet-in 0.22s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-propeller, .toast-in, .animate-fadeIn, .animate-sheet { animation: none; }
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #2d364a;
-}
+
+/* ------------------------------------------------------------------ */
+/* Scrollbars                                                          */
+/* ------------------------------------------------------------------ */
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2c2d30; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3b40; }

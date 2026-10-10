@@ -4,112 +4,113 @@ const db = require('../db');
 
 const router = express.Router();
 
-// Cashier deposit configuration / addresses
+const METHODS = ['easypaisa', 'jazzcash', 'bank', 'usdt'];
+const MAX_PROOF_CHARS = 6 * 1024 * 1024; // ~4.5MB image as base64
+const MAX_PENDING_DEPOSITS = 5;
+const MIN_DEPOSIT = 3000;
+
+// Payment details shown to players (configure via env so they can change without code edits).
 router.get('/config', (req, res) => {
   res.json({
-    crypto: {
-      usdtTrc20Address: 'TN3W4H6rK25vZsN8kL1Q9eT2j4pM7aX8bY',
-      network: 'TRON (TRC-20)',
-      minDeposit: 5.0,
-      exchangeRatePkrPerUsdt: 280.0
-    },
     local: {
       easypaisa: {
-        accountTitle: 'Farzana Kausar',
-        accountNumber: '03004968550',
+        accountTitle: process.env.EASYPAISA_TITLE || 'Farzana Kausar',
+        accountNumber: process.env.EASYPAISA_NUMBER || '03004968550',
         instructions: 'Send via Easypaisa mobile app and submit the TID reference number'
       },
-      bank: {
-        bankName: 'Meezan Bank Ltd',
-        accountTitle: 'Apex Gaming Tech Ltd',
-        accountNumber: '010101029384756',
-        iban: 'PK45MEZN0001010102938475'
+      jazzcash: {
+        accountTitle: process.env.JAZZCASH_TITLE || '',
+        accountNumber: process.env.JAZZCASH_NUMBER || '',
+        instructions: 'Send via JazzCash mobile app and submit the TID reference number'
       }
     }
   });
 });
 
-// Submit a Deposit Request
+// Submit a deposit request (admin verifies and approves)
 router.post('/deposit', authenticateToken, async (req, res) => {
   try {
-    const { method, amount, accountNumber, reference, proofUrl, proofScreenshot } = req.body;
+    const { method, amount, accountNumber, reference, proofUrl, proofScreenshot } = req.body || {};
     const numAmount = Number(amount);
-
-    if (isNaN(numAmount) || numAmount < 100) {
-      return res.status(400).json({ error: 'Minimum deposit amount is PKR 100' });
+    if (!Number.isFinite(numAmount) || numAmount < MIN_DEPOSIT) {
+      return res.status(400).json({ error: `Minimum deposit amount is PKR ${MIN_DEPOSIT.toLocaleString('en-US')}` });
     }
+    if (numAmount > 500000) return res.status(400).json({ error: 'Maximum deposit amount is PKR 500,000' });
+    const m = String(method || '').toLowerCase();
+    if (!METHODS.includes(m)) return res.status(400).json({ error: 'Payment method is required' });
+    const ref = String(reference || '').trim();
+    const proof = String(proofScreenshot || proofUrl || '');
+    if (!ref && !proof) return res.status(400).json({ error: 'Please enter the transaction ID (TID) or upload the payment screenshot' });
+    if (proof.length > MAX_PROOF_CHARS) return res.status(400).json({ error: 'Screenshot is too large (max ~4MB)' });
 
-    if (!method) {
-      return res.status(400).json({ error: 'Payment method is required' });
+    const pending = (await db.getTransactions(req.user.id, { limit: 50, withProof: false }))
+      .filter(t => t.type === 'deposit' && t.status === 'pending').length;
+    if (pending >= MAX_PENDING_DEPOSITS) {
+      return res.status(400).json({ error: 'You already have several pending deposits. Please wait for them to be verified.' });
     }
-
-    if (db.syncWithCloud) await db.syncWithCloud();
 
     const tx = await db.createTransaction({
       userId: req.user.id,
       username: req.user.username,
       type: 'deposit',
-      method,
+      method: m,
       amount: numAmount,
-      accountNumber,
-      reference: reference || 'Receipt Uploaded',
-      proofUrl: proofUrl || '',
-      proofScreenshot: proofScreenshot || proofUrl || ''
+      accountNumber: String(accountNumber || '').slice(0, 60),
+      reference: ref.slice(0, 80) || 'Receipt Uploaded',
+      proofUrl: '',
+      proofScreenshot: proof
     });
-
+    const { proofScreenshot: _p, ...publicTx } = tx;
     res.json({
-      message: 'Deposit request submitted successfully! Admin will verify and credit your balance.',
-      transaction: tx
+      message: 'Deposit request submitted! Admin will verify and credit your balance.',
+      transaction: publicTx
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Could not submit deposit, please try again' });
   }
 });
 
-// Submit a Withdrawal Request
+// Submit a withdrawal request (amount is reserved immediately)
 router.post('/withdraw', authenticateToken, async (req, res) => {
   try {
-    const { method, amount, accountNumber, accountTitle } = req.body;
+    const { method, amount, accountNumber, accountTitle } = req.body || {};
     const numAmount = Number(amount);
-
-    if (isNaN(numAmount) || numAmount < 500) {
+    if (!Number.isFinite(numAmount) || numAmount < 500) {
       return res.status(400).json({ error: 'Minimum withdrawal amount is PKR 500' });
     }
-
-    if (!accountNumber) {
-      return res.status(400).json({ error: 'Receiving account / wallet address is required' });
-    }
-
-    if (db.syncWithCloud) await db.syncWithCloud();
+    const m = String(method || '').toLowerCase();
+    if (!METHODS.includes(m)) return res.status(400).json({ error: 'Payment method is required' });
+    const acc = String(accountNumber || '').trim();
+    if (!acc) return res.status(400).json({ error: 'Receiving account number is required' });
+    const title = String(accountTitle || '').trim();
 
     const tx = await db.createTransaction({
       userId: req.user.id,
       username: req.user.username,
       type: 'withdraw',
-      method,
+      method: m,
       amount: numAmount,
-      accountNumber: `${accountTitle ? accountTitle + ' - ' : ''}${accountNumber}`,
+      accountNumber: `${title ? title.slice(0, 60) + ' - ' : ''}${acc.slice(0, 40)}`,
       reference: 'User Withdrawal Request'
     });
-
-    // Fetch updated balance after withdrawal deduction
-    const updatedUser = db.findUserById(req.user.id);
-
     res.json({
       message: 'Withdrawal request submitted! Payout will be processed to your account.',
       transaction: tx,
-      newBalance: updatedUser ? updatedUser.balance : 0
+      newBalance: await db.getUserBalance(req.user.id)
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// User's own transaction history
+// User's own transaction history (without the heavy screenshot payload)
 router.get('/history', authenticateToken, async (req, res) => {
-  if (db.syncWithCloud) await db.syncWithCloud();
-  const history = db.getTransactions(req.user.id);
-  res.json({ transactions: history });
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ transactions: await db.getTransactions(req.user.id, { limit: 100, withProof: false }) });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not load history' });
+  }
 });
 
 module.exports = router;
